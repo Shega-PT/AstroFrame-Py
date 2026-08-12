@@ -11,7 +11,7 @@ Estabilização geométrica e melhoria automática de fotos e vídeos de eclipse
 - **Lucky imaging** — descarte de frames borrados por variância do Laplaciano, com limiar estimado estatisticamente a partir do próprio vídeo.
 - **Stacking** — combinação (mediana ou média) dos N melhores frames, alinhados por centralização, para reduzir ruído.
 - **Anti-trepidação temporal** — suavização do centroide (EMA) e reutilização do último deslocamento válido quando um frame não tem deteção.
-- **Interface Gradio** — comparação Antes/Depois, sliders e zoom na coroa/borda.
+- **Interface Gradio** — comparação Antes/Depois, sliders e zoom na coroa/borda; aceita imagens ou vídeos (usa o frame mais nítido do vídeo).
 - **CLI** — lote de fotos, vídeos (estabilizar/melhorar/stack), logs e barra de progresso.
 
 ## Instalação

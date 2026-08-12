@@ -5,6 +5,15 @@ Todas as mudanças notáveis do AstroFrame serão documentadas neste ficheiro.
 O formato segue [Keep a Changelog](https://keepachangelog.com/pt-PT/1.1.0/),
 e o versionamento [SemVer](https://semver.org/lang/pt-BR/).
 
+## [0.1.2] - 2026-08-12
+
+### Adicionado
+
+- Interface Gradio aceita vídeos (`.mp4/.avi/.mov`): o frame mais nítido do
+  vídeo é selecionado automaticamente (lucky imaging) e processado como imagem
+  (`_best_frame_from_video` em `ui.gradio_app`).
+- Testes para a seleção do frame mais nítido a partir de vídeo sintético.
+
 ## [0.1.1] - 2026-08-12
 
 ### Adicionado

@@ -128,6 +128,10 @@ run(config_path=None, host="127.0.0.1", port=7860, share=False, inbrowser=True) 
 
 - A UI converte RGB→BGR na entrada e BGR→RGB nas saídas (funções `_to_pipeline`
   / `_from_pipeline`); os valores e o pipeline são partilhados com a CLI.
+- Aceita imagens (`gr.Image`) e vídeos (`gr.Video`): para vídeos, o frame mais
+  nítido é selecionado com `_best_frame_from_video` (lucky imaging via
+  `video.select.sharpness`) e processado como imagem. Sem frames legíveis,
+  levanta `ValueError`.
 - `run()` aceita `inbrowser` para abrir o navegador automaticamente; o ponto de
   entrada único equivalente é `python main.py` na raiz do repositório.
 

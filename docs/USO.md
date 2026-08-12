@@ -57,7 +57,10 @@ astroframe serve --config config.yaml --port 7861 --share
 
 Na interface:
 
-- **Entrada** — carregar a foto/frame (formato abitrátrio de imagem).
+- **Entrada — imagem** — carregar a foto/frame (formato arbitrátrio de imagem).
+- **Entrada — vídeo** — carregar um `.mp4/.avi/.mov`; o **frame mais nítido** do
+  vídeo é selecionado automaticamente (lucky imaging, mesma medição do pipeline)
+  e processado como imagem.
 - **Estabilizado** — disco centralizado (com círculo verde do disco detetado).
 - **Processado** — CLAHE + denoising + nitidez.
 - **Zoom** — ampliação centrada na coroa/borda.
