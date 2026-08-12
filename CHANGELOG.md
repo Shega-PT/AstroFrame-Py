@@ -5,6 +5,23 @@ Todas as mudanças notáveis do AstroFrame serão documentadas neste ficheiro.
 O formato segue [Keep a Changelog](https://keepachangelog.com/pt-PT/1.1.0/),
 e o versionamento [SemVer](https://semver.org/lang/pt-BR/).
 
+## [0.1.1] - 2026-08-12
+
+### Adicionado
+
+- `main.py` na raiz: ponto de entrada único que arranca o frontend (Gradio) e
+  o backend (pipeline) juntos, abrindo o navegador automaticamente
+  (`python main.py [--config|--host|--port|--share|--no-browser]`).
+- Parâmetro `inbrowser` em `ui.gradio_app.run()` (abre o navegador por omissão).
+
+### Documentação
+
+- README: secção de instalação com aviso sobre o PEP 668 (Debian/Ubuntu) e
+  `python main.py` como primeiro comando de uso rápido.
+- `docs/USO.md`: interface web documentada com `python main.py`.
+- `docs/API.md`: nova assinatura de `run()` com `inbrowser`.
+- `.gitignore`: padrões genéricos para vídeos (`*.mp4`, `*.MP4`, `*.MOV`, `*.mkv`).
+
 ## [0.1.0] - 2026-08-12
 
 ### Adicionado

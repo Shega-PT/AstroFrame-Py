@@ -30,13 +30,25 @@ Debian/Ubuntu 24+ é obrigatório o venv — PEP 668).
 
 ## Interface web (Gradio)
 
+O ponto de entrada mais simples é o `main.py` na raiz do repositório: arranca o
+frontend (Gradio) e o backend (motor de processamento em `core/`) no mesmo
+processo e abre o navegador automaticamente.
+
 ```bash
-astroframe serve
+python main.py
 ```
 
 Abre em `http://127.0.0.1:7860`. Para configurar, porta ou link público:
 
 ```bash
+python main.py --config config.yaml --port 7861 --share
+python main.py --no-browser        # não abre o navegador (útil em servidores)
+```
+
+O mesmo servidor está disponível via CLI instalada, equivalente a:
+
+```bash
+astroframe serve                   # equivalente a python main.py
 astroframe serve --config config.yaml --port 7861 --share
 ```
 

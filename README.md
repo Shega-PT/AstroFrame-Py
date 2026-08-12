@@ -24,16 +24,28 @@ pip install -e ".[dev]"
 
 Alternativa simples: `pip install -r requirements.txt`. Requer Python 3.10+.
 
+> [!IMPORTANT]
+> Em Debian/Ubuntu recentes, `pip install` no Python do sistema falha com
+> `error: externally-managed-environment` (PEP 668). Use sempre a virtualenv acima
+> (`source .venv/bin/activate` antes de instalar), ou force com `--break-system-packages`
+> por sua conta e risco.
+
 ## Uso rápido
 
 ```bash
-astroframe serve                          # interface web (Gradio)
+python main.py                             # interface web (Gradio) — frontend + backend juntos
+astroframe serve                          # equivalente via CLI instalada
 astroframe process --input foto1.jpg foto2.jpg --output-dir outputs/
 astroframe video --input eclipse.mp4 --mode enhance
 astroframe video --input eclipse.mp4 --mode stack --stack-n 20
 astroframe video --input eclipse.mp4 --mode enhance --fast   # sem denoise (mais rápido)
 astroframe config-template                # gera config.yaml editável
 ```
+
+`main.py` é o ponto de entrada único: arranca o servidor Gradio que serve o
+frontend no navegador e processa as imagens no backend (o motor em `core/` corre
+no mesmo processo, a cada clique em **Processar**). Opções: `--config`,
+`--host`, `--port`, `--share` e `--no-browser`.
 
 ## Documentação
 

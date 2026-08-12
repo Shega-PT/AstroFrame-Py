@@ -123,11 +123,13 @@ select_best(frames, n_best, config=None) -> list[np.ndarray]
 
 ```python
 build_app(config=None) -> gr.Blocks
-run(config_path=None, host="127.0.0.1", port=7860, share=False) -> None
+run(config_path=None, host="127.0.0.1", port=7860, share=False, inbrowser=True) -> None
 ```
 
 - A UI converte RGB→BGR na entrada e BGR→RGB nas saídas (funções `_to_pipeline`
   / `_from_pipeline`); os valores e o pipeline são partilhados com a CLI.
+- `run()` aceita `inbrowser` para abrir o navegador automaticamente; o ponto de
+  entrada único equivalente é `python main.py` na raiz do repositório.
 
 ### `ui.cli`
 

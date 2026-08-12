@@ -97,7 +97,11 @@ def build_app(config: AstroFrameConfig | None = None) -> gr.Blocks:
 
 
 def run(
-    config_path: str | None = None, host: str = "127.0.0.1", port: int = 7860, share: bool = False
+    config_path: str | None = None,
+    host: str = "127.0.0.1",
+    port: int = 7860,
+    share: bool = False,
+    inbrowser: bool = True,
 ) -> None:
     """Lança a interface Gradio no navegador."""
     if config_path:
@@ -107,4 +111,4 @@ def run(
         config = AstroFrameConfig.from_yaml(path)
     else:
         config = AstroFrameConfig()
-    build_app(config).launch(server_name=host, server_port=port, share=share)
+    build_app(config).launch(server_name=host, server_port=port, share=share, inbrowser=inbrowser)
