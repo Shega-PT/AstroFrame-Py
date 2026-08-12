@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "astroframe"
+version = "0.1.0"
+description = "Estabilização geométrica e melhoria automática de fotos e vídeos de eclipses"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{ name = "shegapt" }]
+keywords = ["astrofotografia", "eclipse", "opencv", "estabilização", "image-processing"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Topic :: Multimedia :: Graphics :: Graphics Conversion",
+]
+dependencies = [
+    "numpy>=1.24",
+    "opencv-python>=4.8",
+    "gradio>=4.0",
+    "pyyaml>=6.0",
+    "tqdm>=4.65",
+]
+
+[project.optional-dependencies]
+rife = ["torch>=2.0"]
+dev = ["pytest>=7.0", "ruff>=0.6"]
+
+[project.scripts]
+astroframe = "astroframe.ui.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
