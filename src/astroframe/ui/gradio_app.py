@@ -1,14 +1,20 @@
-"""Interface Gradio: processamento de imagens e vídeos com visualização ao vivo.
+"""Interface Gradio: processamento de imagens e vídeos com avaliação por estrelas.
 
 Dois separadores:
 
-- **Imagem** — Antes/Depois com sliders, zoom na coroa/borda e disco detetado.
+- **Imagem** — Antes/Depois com sliders, zoom na coroa/borda e disco detetado
+  (verde) + reflexos (vermelho); avaliação automática (0–5 estrelas) com
+  feedback manual guardado na base local de aprendizagem.
 - **Vídeo** — ao carregar um vídeo, os metadados (ffprobe/OpenCV/EXIF) são
-  lidos e as sugestões de parâmetros são aplicadas automaticamente aos sliders.
-  Ao processar, o painel esquerdo mostra o vídeo em tempo real com o círculo
-  (bounding box) do disco detetado, e o direito atualiza em frames espaçados o
-  resultado final (estabilizado + CLAHE + denoise + nitidez). Opcionalmente,
-  exporta o vídeo processado (.mp4, sem áudio — limitação do OpenCV).
+  lidos e as sugestões de parâmetros (incluindo o que a IA já aprendeu) são
+  aplicadas aos sliders. Ao processar, o painel esquerdo mostra o vídeo em
+  tempo real com os discos detetados (verde principal, vermelho reflexos) em
+  todos os frames, e o direito atualiza em frames espaçados o resultado final
+  (estabilizado + CLAHE + denoise + nitidez + polimento a preto).
+
+A aprendizagem (`ai.feedback`) regista **uma linha por utilização** na base
+SQLite `~/.astroframe/feedback.db`: o que foi usado, como correu (métricas +
+estrelas), o que se ajustou para a próxima vez e porquê.
 """
 
 from __future__ import annotations
@@ -21,10 +27,19 @@ import cv2
 import gradio as gr
 import numpy as np
 
+from astroframe.ai.feedback import (
+    FeedbackDB,
+    apply_learned,
+    origin_for,
+    profile_for,
+    record_run,
+)
+from astroframe.ai.score import score_image, stars_text
 from astroframe.config import AstroFrameConfig
 from astroframe.core.enhancer import enhance_image
 from astroframe.core.pipeline import process_image
-from astroframe.core.stabilizer import AntiJitterStabilizer, DiskDetection
+from astroframe.core.polish import polish_image
+from astroframe.core.stabilizer import AntiJitterStabilizer, DiskDetection, find_all_disks
 from astroframe.meta.extractor import MediaMetadata, extract_metadata
 from astroframe.meta.suggest import suggest_config, summary_fields
 from astroframe.video.reader import FrameReader
@@ -57,16 +72,33 @@ def _zoom_crop(image: np.ndarray, zoom: float) -> np.ndarray:
     return image[y0 : y0 + crop_h, x0 : x0 + crop_w]
 
 
+def _radius_clamped(frame: np.ndarray, radius: int) -> int:
+    height, width = frame.shape[:2]
+    return max(1, min(radius, min(height, width) // 2))
+
+
 def _draw_detection(frame: np.ndarray, detection: DiskDetection | None) -> np.ndarray:
     """Cópia do frame com o círculo (bounding box) do disco detetado."""
-    if detection is None:
-        return frame.copy()
+    return _draw_disks(frame, detection)
+
+
+def _draw_disks(
+    frame: np.ndarray,
+    primary: DiskDetection | None,
+    reflections: list[DiskDetection] | tuple[DiskDetection, ...] | None = None,
+) -> np.ndarray:
+    """Cópia do frame com TODOS os discos: principal a verde, reflexos a vermelho.
+
+    `primary`/`reflections` usam as coordenadas da própria `frame`.
+    """
     height, width = frame.shape[:2]
-    if not (0 <= detection.cx < width and 0 <= detection.cy < height):
-        return frame.copy()
     marked = frame.copy()
-    radius = max(1, min(detection.radius, min(height, width) // 2))
-    cv2.circle(marked, (detection.cx, detection.cy), radius, (0, 255, 0), 2)
+    if primary is not None and 0 <= primary.cx < width and 0 <= primary.cy < height:
+        cv2.circle(marked, (primary.cx, primary.cy), _radius_clamped(frame, primary.radius), (0, 255, 0), 2)
+    for disk in reflections or ():
+        if not (0 <= disk.cx < width and 0 <= disk.cy < height):
+            continue
+        cv2.circle(marked, (disk.cx, disk.cy), _radius_clamped(frame, disk.radius), (0, 0, 255), 2)
     return marked
 
 
@@ -86,25 +118,87 @@ def _summary_html(meta: MediaMetadata) -> str:
     return "<table>" + rows + "</table>"
 
 
+def _learning_db(cfg: AstroFrameConfig, db: FeedbackDB | None) -> FeedbackDB | None:
+    """Devolve o banco de aprendizagem, respeitando `feedback.enabled`."""
+    if db is not None:
+        return db
+    if not cfg.feedback.enabled:
+        return None
+    return FeedbackDB()
+
+
+def _learning_log_html(profile: str | None, db: FeedbackDB | None) -> str:
+    """Log de aprendizagem do perfil (o que mudou, como e porquê)."""
+    if not profile:
+        return "Sem histórico — processa primeiro uma imagem ou vídeo."
+    if db is None:
+        return "Aprendizagem desativada (feedback.enabled = false no config)."
+    runs = db.history(profile, limit=12)
+    if not runs:
+        return "Sem registos para este perfil ainda — a primeira utilização cria o log."
+    rows = []
+    for run in runs:
+        stars = stars_text(run.stars_calc)
+        manual = f" · utilizador: {stars_text(run.stars_user)}" if run.stars_user is not None else ""
+        changes = ", ".join(f"{key} {value:+.3g}" for key, value in run.nudge.items()) or "sem alterações"
+        rows.append(
+            f"<tr><td>{run.ts}</td><td>{run.kind}</td><td>{stars}{manual}</td>"
+            f"<td>{changes}</td><td>{run.rationale}</td></tr>"
+        )
+    body = "".join(rows)
+    return (
+        "<table>"
+        "<tr><th>Data</th><th>Tipo</th><th>Avaliação</th><th>Ajustes</th><th>Porquê</th></tr>"
+        f"{body}</table>"
+    )
+
+
+def _run_state(kind: str, profile: str, cfg: AstroFrameConfig, rating: object, source: str = "") -> dict:
+    """Estado do último processamento, guardado para a avaliação manual."""
+    return {"kind": kind, "profile": profile, "cfg": cfg, "rating": rating, "source": source}
+
+
 def inspect_video_upload(
-    video_path: str | None, config: AstroFrameConfig | None = None
-) -> tuple[str, dict, object, object, object]:
+    video_path: str | None, config: AstroFrameConfig | None = None, db: FeedbackDB | None = None
+) -> tuple[str, dict, object, object, object, object]:
     """Extrai metadados do vídeo carregado e devolve as sugestões para os sliders.
 
-    Devolve (html_resumo, metadados_raw, update_clip, update_denoise, update_unsharp).
+    As sugestões incluem o que a IA já aprendeu para o perfil do vídeo
+    (metadados → `suggest_config`, depois deltas do banco de feedback).
+    Devolve (html_resumo, metadados_raw, clip, denoise, unsharp, coroa).
     """
     config = config or AstroFrameConfig()
     if not video_path:
         empty = gr.update()
-        return "Carrega um vídeo para ver os metadados.", {}, empty, empty, empty
+        return "Carrega um vídeo para ver os metadados.", {}, empty, empty, empty, empty
     meta = extract_metadata(video_path)
     suggested = suggest_config(meta)
+    learned = apply_learned(
+        suggested,
+        profile_for("video", meta.width or 0, meta.height or 0),
+        db=_learning_db(config, db),
+    )
+    if learned is suggested:
+        clip, denoise, unsharp, corona = (
+            suggested.clahe.clip_limit,
+            suggested.denoise.h,
+            suggested.unsharp.amount,
+            suggested.polish.corona_scale,
+        )
+    else:
+        clip, denoise, unsharp, corona = (
+            learned.clahe.clip_limit,
+            learned.denoise.h,
+            learned.unsharp.amount,
+            learned.polish.corona_scale,
+        )
     return (
         _summary_html(meta),
         meta.raw,
-        gr.update(value=suggested.clahe.clip_limit),
-        gr.update(value=suggested.denoise.h),
-        gr.update(value=suggested.unsharp.amount),
+        gr.update(value=clip),
+        gr.update(value=denoise),
+        gr.update(value=unsharp),
+        gr.update(value=corona),
     )
 
 
@@ -115,35 +209,41 @@ def process_video(
     denoise_h: float,
     sharp_amount: float,
     show_disk: bool,
+    corona_scale: float,
     config: AstroFrameConfig | None = None,
+    db: FeedbackDB | None = None,
 ):
     """Processa um vídeo frame a frame, emitindo o estado ao vivo e o preview.
 
     É um gerador: a cada frame processado entrega
-    (live_rgb, preview_rgb, out_video, status, progresso); a última entrega é
-    o estado final. O preview (direita) só é atualizado em frames espaçados.
+    (live_rgb, preview_rgb, out_video, status, progresso, avaliação, estado,
+    log); a última entrega é o estado final. O preview (direita) só é
+    atualizado em frames espaçados e já vem polido (fundo preto).
     """
     config = config or AstroFrameConfig()
     if not video_path:
-        yield None, None, None, "Carrega um vídeo primeiro.", 0.0
+        yield None, None, None, "Carrega um vídeo primeiro.", 0.0, "", None, ""
         return
-
-    cfg = replace(
-        config,
-        clahe=replace(config.clahe, clip_limit=clip_limit),
-        denoise=replace(config.denoise, h=denoise_h),
-        unsharp=replace(config.unsharp, amount=sharp_amount),
-    )
+    db = _learning_db(config, db)
 
     reader = FrameReader(video_path)
-    engine = AntiJitterStabilizer(config=cfg)
     width, height = reader.size
+    profile = profile_for("video", width, height)
+    cfg = apply_learned(config, profile, db=db)
+    cfg = replace(
+        cfg,
+        clahe=replace(cfg.clahe, clip_limit=clip_limit),
+        denoise=replace(cfg.denoise, h=denoise_h),
+        unsharp=replace(cfg.unsharp, amount=sharp_amount),
+        polish=replace(cfg.polish, corona_scale=corona_scale),
+    )
     total = reader.frame_count or 0
     every = _preview_every(total)
     writer = None
     out_path = None
     last_live = None
     last_preview = None
+    last_rating = None
     done = 0
     try:
         if export_video:
@@ -153,16 +253,45 @@ def process_video(
             )
             if not writer.isOpened():
                 raise OSError(f"Não foi possível criar o vídeo de saída: {out_path}")
+        engine = AntiJitterStabilizer(config=cfg)
         with reader:
             for frame in reader:
                 stabilized, detection = engine.stabilize(frame)
-                live = _draw_detection(frame, detection) if show_disk else frame.copy()
-                state = "sem disco detetado" if detection is None else "disco no centro"
+                disks = engine.last_all_disks
+                primary = detection if detection is not None else engine.last_detection
+                reflections = [d for d in disks if d != primary] if primary is not None else disks
+                live = _draw_disks(frame, primary, reflections) if show_disk else frame.copy()
+                state = "sem disco detetado" if primary is None else "disco no centro"
                 status = f"Frame {done + 1}/{total or '?'} · {state}"
                 if writer is not None and stabilized.shape[:2] == (height, width):
-                    writer.write(stabilized)
+                    engine_radius = engine.last_detection.radius if engine.last_detection else 0
+                    if engine_radius > 0:
+                        writer.write(
+                            polish_image(
+                                stabilized,
+                                DiskDetection(width // 2, height // 2, engine_radius),
+                                cfg,
+                            )
+                        )
+                    else:
+                        writer.write(stabilized)
                 if total and done % every == 0:
-                    last_preview = enhance_image(stabilized, cfg)
+                    raw = enhance_image(stabilized, cfg)
+                    engine_radius = engine.last_detection.radius if engine.last_detection else 0
+                    if engine_radius > 0:
+                        last_preview = polish_image(
+                            raw,
+                            DiskDetection(width // 2, height // 2, engine_radius),
+                            cfg,
+                        )
+                        last_rating = score_image(
+                            raw,
+                            DiskDetection(width // 2, height // 2, engine_radius),
+                            cfg,
+                        )
+                    else:
+                        last_preview = raw
+                        last_rating = score_image(raw, None, cfg)
                 last_live = live
                 done += 1
                 yield (
@@ -171,16 +300,28 @@ def process_video(
                     None,
                     status,
                     done / total if total else 0.0,
+                    stars_text(last_rating.stars) if last_rating is not None else "",
+                    None,
+                    "",
                 )
         final = f"Concluído — {done} frames processados."
         if writer is not None:
             final += f" Exportado: {out_path}"
+        rating_html = stars_text(last_rating.stars) if last_rating is not None else "Avaliação — sem frames."
+        state = _run_state("video", profile, cfg, last_rating, source=str(video_path))
+        log_html = ""
+        if last_rating is not None and db is not None:
+            record_run(db, "video", profile, cfg, origin_for(cfg), last_rating, source=str(video_path))
+            log_html = _learning_log_html(profile, db)
         yield (
             _from_pipeline(last_live) if last_live is not None else None,
             _from_pipeline(last_preview) if last_preview is not None else None,
             out_path,
             final,
             1.0,
+            rating_html,
+            state,
+            log_html,
         )
     finally:
         if writer is not None:
@@ -194,35 +335,103 @@ def process_image_input(
     sharp_amount: float,
     zoom: float,
     show_disk: bool,
+    corona_scale: float,
     config: AstroFrameConfig | None = None,
     progress=None,
+    db: FeedbackDB | None = None,
 ):
-    """Processa uma imagem do separador Imagem; devolve RGB pronto para o Gradio."""
+    """Processa uma imagem (separador Imagem) e avalia o resultado.
+
+    Devolve (estabilizado, processado, zoom, avaliação_html, estado, log).
+    Também regista a utilização no banco de aprendizagem (uma linha nova).
+    """
     if progress is None:
         progress = gr.Progress()
     if input_image is None:
-        return None, None, None
+        return (None, None, None, "Avaliação — processa primeiro uma imagem.", None, "")
 
     config = config or AstroFrameConfig()
+    db = _learning_db(config, db)
+    bgr = _to_pipeline(input_image)
+    height, width = bgr.shape[:2]
+    profile = profile_for("image", width, height)
+    cfg = apply_learned(config, profile, db=db)
     cfg = replace(
-        config,
-        clahe=replace(config.clahe, clip_limit=clip_limit),
-        denoise=replace(config.denoise, h=denoise_h),
-        unsharp=replace(config.unsharp, amount=sharp_amount),
+        cfg,
+        clahe=replace(cfg.clahe, clip_limit=clip_limit),
+        denoise=replace(cfg.denoise, h=denoise_h),
+        unsharp=replace(cfg.unsharp, amount=sharp_amount),
+        polish=replace(cfg.polish, corona_scale=corona_scale),
     )
-    result = process_image(_to_pipeline(input_image), cfg)
+    result = process_image(bgr, cfg)
+
+    if result.detection is not None:
+        rating = score_image(
+            result.enhanced_raw,
+            DiskDetection(width // 2, height // 2, result.detection.radius),
+            cfg,
+        )
+    else:
+        rating = score_image(result.enhanced_raw, None, cfg)
+    rating_html = stars_text(rating.stars)
 
     stabilized = result.stabilized.copy()
     if show_disk and result.detection is not None:
-        height, width = stabilized.shape[:2]
-        cv2.circle(stabilized, (width // 2, height // 2), result.detection.radius, (0, 255, 0), 2)
+        primary = DiskDetection(width // 2, height // 2, result.detection.radius)
+        dx, dy = width // 2 - result.detection.cx, height // 2 - result.detection.cy
+        reflections = [
+            DiskDetection(disk.cx + dx, disk.cy + dy, disk.radius)
+            for disk in find_all_disks(bgr, cfg)
+            if abs(disk.cx - result.detection.cx) + abs(disk.cy - result.detection.cy) > 4
+        ]
+        stabilized = _draw_disks(stabilized, primary, reflections)
 
     zoomed = _zoom_crop(result.enhanced, zoom)
+    state = _run_state("image", profile, cfg, rating, source=f"{width}x{height}")
+    log_html = ""
+    if db is not None:
+        record_run(
+            db,
+            "image",
+            profile,
+            cfg,
+            origin_for(cfg),
+            rating,
+            source=f"{width}x{height}",
+        )
+        log_html = _learning_log_html(profile, db)
     return (
         _from_pipeline(stabilized),
         _from_pipeline(result.enhanced),
         _from_pipeline(zoomed),
+        rating_html,
+        state,
+        log_html,
     )
+
+
+def manual_feedback(state: dict | None, stars_user: float, db: FeedbackDB | None = None) -> tuple[str, str]:
+    """Guarda a avaliação manual (peso reforçado) e devolve o resultado + log."""
+    db = db or FeedbackDB()
+    if not state:
+        return "Processa primeiro (imagem ou vídeo) para poderes avaliar.", _learning_log_html(None, db)
+    rating = state.get("rating")
+    if rating is None:
+        return "Sem avaliação para guardar — processa novamente.", _learning_log_html(
+            state.get("profile"), db
+        )
+    cfg = state.get("cfg") or AstroFrameConfig()
+    run = record_run(
+        db,
+        state.get("kind", "image"),
+        state.get("profile", "unknown"),
+        cfg,
+        state.get("origin") or {},
+        rating,
+        stars_user=stars_user,
+        source=state.get("source", ""),
+    )
+    return f"Guardado: {run.rationale}", _learning_log_html(state.get("profile"), db)
 
 
 def build_app(config: AstroFrameConfig | None = None) -> gr.Blocks:
@@ -230,14 +439,18 @@ def build_app(config: AstroFrameConfig | None = None) -> gr.Blocks:
 
     with gr.Blocks(title="AstroFrame — Eclipse Auto-Enhancer") as demo:
         gr.Markdown("# 🌒 AstroFrame — Eclipse Auto-Enhancer")
-        gr.Markdown("Estabilização geométrica e melhoria automática de fotos e frames de eclipses.")
+        gr.Markdown(
+            "Estabilização geométrica e melhoria automática de fotos e frames de eclipses. "
+            "Cada utilização é avaliada (0–5 estrelas) e registada no banco local de "
+            "aprendizagem — o sistema ajusta-se automaticamente a cada execução."
+        )
 
         with gr.Tabs():
             with gr.Tab("Imagem"):
                 with gr.Row():
                     input_image = gr.Image(label="Entrada — imagem (foto/frame original)")
                     stabilized = gr.Image(label="Estabilizado (disco centrado)")
-                    processed = gr.Image(label="Processado (CLAHE + denoise + nitidez)")
+                    processed = gr.Image(label="Processado (estabilizado + CLAHE + denoise + polido)")
 
                 with gr.Row():
                     zoomed = gr.Image(label="Zoom na coroa/borda")
@@ -253,21 +466,41 @@ def build_app(config: AstroFrameConfig | None = None) -> gr.Blocks:
                         0.0, 2.0, value=config.unsharp.amount, step=0.1, label="Nitidez (unsharp)"
                     )
                     zoom = gr.Slider(1.0, 4.0, value=1.0, step=0.5, label="Zoom na coroa/borda")
+                    corona_scale = gr.Slider(
+                        1.0, 3.0, value=config.polish.corona_scale, step=0.1, label="Coroa mantida (× raio)"
+                    )
                     show_disk = gr.Checkbox(True, label="Mostrar disco detetado")
 
+                    with gr.Row():
+                        rating_label = gr.HTML(label="Avaliação automática")
+                        stars_manual = gr.Slider(
+                            0.0, 5.0, value=3.0, step=0.5, label="Avaliação manual (estrelas)"
+                        )
+                        feedback_btn = gr.Button("Guardar avaliação manual", variant="secondary")
+                    with gr.Accordion("Log de aprendizagem (o que a IA ajustou e porquê)", open=False):
+                        image_log_html = gr.HTML()
+                        feedback_msg = gr.Textbox(label="Feedback do ajuste", interactive=False)
+
+                image_run_state = gr.State()
                 button = gr.Button("Processar", variant="primary")
                 button.click(
                     process_image_input,
-                    inputs=[input_image, clip_limit, denoise_h, sharp_amount, zoom, show_disk],
-                    outputs=[stabilized, processed, zoomed],
+                    inputs=[input_image, clip_limit, denoise_h, sharp_amount, zoom, show_disk, corona_scale],
+                    outputs=[stabilized, processed, zoomed, rating_label, image_run_state, image_log_html],
+                )
+                feedback_btn.click(
+                    manual_feedback,
+                    inputs=[image_run_state, stars_manual],
+                    outputs=[feedback_msg, image_log_html],
                 )
 
             with gr.Tab("Vídeo"):
                 gr.Markdown(
                     "Carregue um vídeo: os **metadados** (ffprobe/OpenCV/EXIF) são lidos e os "
-                    "**sliders são pré-preenchidos com sugestões** de otimização (continuam editáveis). "
-                    "Ao processar, a **esquerda mostra o vídeo ao vivo** com o círculo do disco detetado "
-                    "e a **direita atualiza em frames espaçados** o resultado final com todas as correções."
+                    "**sliders são pré-preenchidos com sugestões** (héurísticas + o que a IA já "
+                    "aprendeu; continuam editáveis). Ao processar, a **esquerda mostra o vídeo ao "
+                    "vivo** com os discos detetados (verde = principal, vermelho = reflexos) e a "
+                    "**direita atualiza em frames espaçados** o resultado final com todas as correções."
                 )
                 with gr.Row():
                     with gr.Column(scale=1):
@@ -277,7 +510,7 @@ def build_app(config: AstroFrameConfig | None = None) -> gr.Blocks:
                             meta_json = gr.JSON()
                     with gr.Column(scale=2):
                         with gr.Row():
-                            live = gr.Image(label="Ao vivo — frame original + disco detetado")
+                            live = gr.Image(label="Ao vivo — frame original + discos detetados")
                             preview = gr.Image(label="Resultado final (frames espaçados)")
                         with gr.Accordion("Processamento", open=False):
                             v_clip_limit = gr.Slider(
@@ -289,19 +522,43 @@ def build_app(config: AstroFrameConfig | None = None) -> gr.Blocks:
                             v_sharp_amount = gr.Slider(
                                 0.0, 2.0, value=config.unsharp.amount, step=0.1, label="Nitidez (unsharp)"
                             )
-                            v_show_disk = gr.Checkbox(True, label="Mostrar disco detetado ao vivo")
+                            v_corona_scale = gr.Slider(
+                                1.0,
+                                3.0,
+                                value=config.polish.corona_scale,
+                                step=0.1,
+                                label="Coroa mantida (× raio)",
+                            )
+                            v_show_disk = gr.Checkbox(True, label="Mostrar discos detetados ao vivo")
                             v_export = gr.Checkbox(False, label="Exportar vídeo processado (.mp4, sem áudio)")
+                        with gr.Row():
+                            v_rating_label = gr.HTML(label="Avaliação automática")
+                            v_stars_manual = gr.Slider(
+                                0.0, 5.0, value=3.0, step=0.5, label="Avaliação manual (estrelas)"
+                            )
+                            v_feedback_btn = gr.Button("Guardar avaliação manual", variant="secondary")
                         status = gr.Textbox(label="Estado", interactive=False)
                         progress_slider = gr.Slider(
                             minimum=0.0, maximum=1.0, value=0.0, step=0.01, label="Progresso", visible=False
                         )
                         export_video = gr.Video(label="Vídeo processado (exportação)")
+                        with gr.Accordion("Log de aprendizagem (o que a IA ajustou e porquê)", open=False):
+                            v_log_html = gr.HTML()
+                            v_feedback_msg = gr.Textbox(label="Feedback do ajuste", interactive=False)
                         video_button = gr.Button("Processar vídeo", variant="primary")
+                        video_run_state = gr.State()
 
                 video_input.upload(
                     inspect_video_upload,
                     inputs=[video_input],
-                    outputs=[summary_html, meta_json, v_clip_limit, v_denoise_h, v_sharp_amount],
+                    outputs=[
+                        summary_html,
+                        meta_json,
+                        v_clip_limit,
+                        v_denoise_h,
+                        v_sharp_amount,
+                        v_corona_scale,
+                    ],
                 )
                 video_button.click(
                     process_video,
@@ -312,8 +569,23 @@ def build_app(config: AstroFrameConfig | None = None) -> gr.Blocks:
                         v_denoise_h,
                         v_sharp_amount,
                         v_show_disk,
+                        v_corona_scale,
                     ],
-                    outputs=[live, preview, export_video, status, progress_slider],
+                    outputs=[
+                        live,
+                        preview,
+                        export_video,
+                        status,
+                        progress_slider,
+                        v_rating_label,
+                        video_run_state,
+                        v_log_html,
+                    ],
+                )
+                v_feedback_btn.click(
+                    manual_feedback,
+                    inputs=[video_run_state, v_stars_manual],
+                    outputs=[v_feedback_msg, v_log_html],
                 )
 
     return demo

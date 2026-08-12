@@ -17,7 +17,7 @@ Dataclasses com os parâmetros (ver [USO.md](USO.md#configuração-configyaml)
 para a tabela campo a campo):
 
 - `CLAHEConfig`, `DenoiseConfig`, `UnsharpConfig`
-- `StabilizerConfig`, `LuckyConfig`, `StackingConfig`
+- `StabilizerConfig`, `PolishConfig`, `FeedbackConfig`, `LuckyConfig`, `StackingConfig`
 - `AstroFrameConfig` — raiz com um campo por subconfiguração.
 
 Métodos de `AstroFrameConfig`:
@@ -42,19 +42,41 @@ class DiskDetection:
     cy: int          # centro detetado nas coordenadas da imagem de origem
     radius: int      # raio ajustado após recorte/re-escala
 
+find_all_disks(image, config=None) -> list[DiskDetection]
 find_disk_center(image, config=None) -> DiskDetection | None
 center_and_stabilize(image, config=None) -> tuple[np.ndarray, DiskDetection | None]
 class AntiJitterStabilizer(config=None, alpha=None): ...
 ```
 
-- `find_disk_center` — HoughCircles + fallback por contornos + refinamento por
-  centroide de intensidade. Em frames ≥1200 px a deteção corre em meia-resolução.
+- `find_all_disks` — HoughCircles + fallback por contornos, com fusão de
+  duplicados por centro/raio e filtro de disco interior idêntico ao principal
+  (duplicado do Hough); a lista é ordenada por luminosidade (o principal é o
+  primeiro). Cada disco tem um `kind` (`"princial"`/`"reflexo"`), a fração do
+  limiar Hough que o detetou (`hough_strength`) e a origem (`"hough"`/
+  `"contour"`/`"merged"`).
+- `find_disk_center` — primeiro elemento de `find_all_disks`; HoughCircles +
+  fallback por contornos + refinamento por centroide de intensidade. Em frames
+  ≥1200 px a deteção corre em meia-resolução.
 - `center_and_stabilize` — translada o frame para centrar o disco e recorta as
   bordas pretas (`stabilizer.auto_crop`), devolvendo o raio ajustado.
   Sem disco detetado devolve a imagem inalterada e `None`.
 - `AntiJitterStabilizer.stabilize(frame) -> (frame, DiskDetection | None)` —
   estado interno: EMA do centroide (`jitter_alpha`) e reutilização do último
-  deslocamento válido em frames sem deteção.
+  deslocamento válido em frames sem deteção (`last_detection` — propriedade com
+  o último disco detetado, usada pelo vídeo para polimento/preview).
+
+### `core.polish`
+
+```python
+polish_image(image, detection, config=None) -> np.ndarray
+```
+
+- Dá brilho ao disco principal (`polish.brightness`, concentrado no centro com
+  `brightness_exponent`) enquanto desfoca o fundo até `corona_scale × raio`
+  (mantém a coroa nítida) e **remove os reflexos** detetados por
+  `find_all_disks` (apenas os que tiverem ≥ `reflection_min_radius` do raio do
+  principal, para não apagar estrelas próximas). Sem deteção devolve a imagem
+  inalterada.
 
 ### `core.enhancer`
 
@@ -75,7 +97,8 @@ enhance_image(image, config=None, use_denoise=True) -> np.ndarray
 class ProcessResult:
     original: np.ndarray
     stabilized: np.ndarray
-    enhanced: np.ndarray
+    enhanced: np.ndarray       # estabilizado + CLAHE + denoise + unsharp + polimento
+    enhanced_raw: np.ndarray   # o mesmo, sem polimento (base da avaliação)
     detection: DiskDetection | None
 
 process_image(image, config=None) -> ProcessResult
@@ -182,30 +205,37 @@ summary_fields(meta: MediaMetadata) -> dict[str, str]
 build_app(config=None) -> gr.Blocks
 run(config_path=None, host="127.0.0.1", port=7860, share=False, inbrowser=True) -> None
 
-def inspect_video_upload(video_path, config) -> tuple[str, dict, dict]  # html, raw, updates
-def process_video(video_path, config, export: bool = False) -> Generator
-def process_image_input(image, config) -> tuple[np.ndarray, np.ndarray, str]
+def inspect_video_upload(video_path, db=None, config=None) -> tuple[str, dict, dict, dict, dict, dict]
+def process_video(video_path, export=False, denoise_h=None, ...) -> Generator[tuple]
+def process_image_input(image, clip_limit=None, denoise_h=None, ..., db=None, config=None) -> tuple[np.ndarray, np.ndarray, np.ndarray, str, dict, str]
+def manual_feedback(state, stars, db=None, config=None) -> tuple[str, str]
 ```
 
 - A UI converte RGB→BGR na entrada e BGR→RGB nas saídas (funções `_to_pipeline`
   / `_from_pipeline`); os valores e o pipeline são partilhados com a CLI.
 - Dois separadores: **Imagem** (entrada, estabilizado, processado, zoom,
-  sliders) e **Vídeo** (upload, painel de metadados, sliders pré-preenchidos,
-  processamento ao vivo, exportação opcional).
-- `inspect_video_upload` chama `meta.extractor` + `meta.suggest` e devolve,
+  avaliação, sliders, avaliação manual + log de aprendizagem) e **Vídeo**
+  (upload, painel de metadados, sliders pré-preenchidos, processamento ao vivo
+  com discos a verde/reflexos a vermelho, avaliação automática e manual,
+  exportação opcional).
+- `inspect_video_upload` chama `meta.extractor` + `meta.suggest` +
+  `apply_learned` (avaliações anteriores do mesmo perfil de câmara) e devolve,
   respetivamente: HTML do resumo (proporção/qualidade/sugestões), os metadados
-  crus e os `update()` dos sliders com os valores sugeridos.
+  crus e os `update()` dos sliders.
 - `process_video` é um **gerador** (consumido pelo `gr.Progress.track` do
   Gradio); a cada frame devolve:
-  `(live_rgb, preview_rgb, out_video_path_ou_None, status, progress)` —
-  `live` é o frame original em tempo real com o círculo do disco detetado
-  (`_draw_detection`), `preview` é o resultado final e é mostrado apenas em
-  frames espaçados (`_preview_every`, escolha autónoma de `spacing`), os outros
-  campos com `None`/fração. Sem disco detetado no 1.º frame, para com
-  `ValueError`. Se `export=True`, escreve o vídeo completo (.mp4, codec `mp4v`,
-  sem áudio) e devolve o caminho no último frame.
-- `process_image_input` é o antigo handler de imagem refatorado para função de
-  módulo testável (devolve estabilizado, processado e o estado como texto).
+  `(live_rgb, preview_rgb, out_video_path_ou_None, status, progress, rating_html,
+  run_state, log_html)` — `live` é o frame original em tempo real com os discos
+  detetados (`_draw_detection`: verde principal, vermelho reflexos), `preview` é
+  o resultado final mostrado apenas em frames espaçados (`_preview_every`), os
+  outros campos com `None`/fração no meio do passe. Sem disco detetado em
+  **nenhum** frame, o resultado final sai sem polimento e a avaliação é calculada
+  sem deteção (aviso no estado). Se `export=True`, escreve o vídeo completo com
+  polimento (.mp4, codec `mp4v`, sem áudio) e devolve o caminho no último frame.
+- `process_image_input` devolve `(estabilizado, processado, zoom, html da
+  avaliação, estado, log de aprendizagem)`; o estado (perfil, avaliação, parâmetros)
+  alimenta o `manual_feedback` que grava a avaliação em estrelas e reporta o ajuste
+  aprendido no log.
 - `run()` aceita `inbrowser` para abrir o navegador automaticamente; o ponto de
   entrada único equivalente é `python main.py` na raiz do repositório.
 
@@ -224,7 +254,7 @@ process_video(path, output, config, mode, stack_n, fast) -> str  # caminho de sa
   se nada for processado. `mode="stack"` centraliza os frames antes de
   empilhar. Exportação de vídeo não copia áudio (limitado pelo OpenCV).
 
-## `astroframe.ai` (opcional)
+## `astroframe.ai` (opcional até 0.3: RIFE)
 
 ```python
 class RifeInterpolator(repo, source="github", model_name="IFNet", device=None):
@@ -236,3 +266,66 @@ class RifeInterpolator(repo, source="github", model_name="IFNet", device=None):
   intermédios em BGR. A interface do modelo depende do repositório RIFE usado
   (o `_infer` internal é o ponto a ajustar entre versões); sem PyTorch levanta
   `RuntimeError` com instruções.
+
+### `ai.score` (avaliação automática)
+
+```python
+@dataclass
+class StarRating:
+    stars: float            # 0.0–5.0 (peso das métricas = 1)
+    score: float            # 0.0–1.0 não ponderado
+    metrics: dict[str, float]  # noise | contrast | size | corona; 0 (mau) a 1 (bom)
+    explanation: str        # texto humano com o porquê
+
+score_image(image, detection=None, config=None) -> StarRating
+package_rating(original, stabilized, detection, config=None) -> StarRating
+score_from_stars(stars, metrics=None) -> StarRating   # para testes/externalização
+```
+
+- `noise` = variância do Laplaciano (sem ruído → 1), `contrast` = relação
+  percentil 99/50 da luminância, `size` = raio do disco vs. frame,
+  `corona` = brilho médio do anel coroa (1–2× raio) vs. disco.
+- `score_image` funciona **sem deteção** (métricas de ruído/contraste apenas).
+
+### `ai.feedback` (aprendizagem por avaliação)
+
+```python
+@dataclass(frozen=True)
+class ConfigNudge:
+    clip_limit: dict       # {multiplicador, offset}   ex.: {'m': 1.0, 'b': 0.0}
+    denoise: dict          #                           ex.: {'h': {'m': 1.0, 'b': 1.5}}
+    unsharp: dict          # {'amount': {...}, 'sigma': {'m': 0.7, 'b': 1.2}}
+    polish: dict           # {'brightness': {...}}
+    explanation: dict[str, str]  # texto por parâmetro (porquê do ajuste)
+    judicial_override: bool      # True: a avaliação má impõe logo a correção
+    factor: float          # escala global da correção (feedback.nudge_alpha)
+
+@dataclass(frozen=True)
+class RunRecord:
+    id: int; profile: str; kind: str; params: dict; metrics: dict
+    stars: float; source: str; at: str; modified: dict | None
+
+def profile_for(kind, width, height) -> str     # ex.: "video@5616x3744"
+def format_profile(profile) -> str              # "5616×3744 · vídeo" (interface)
+def record_run(db, kind, profile, config, params, rating, source="cli") -> RunRecord
+def recent_nudges(db, profile, limit=5) -> list[RunRecord]
+def apply_learned(config, profile, db=None) -> AstroFrameConfig
+def _learning_db(config, db=None) -> FeedbackDB | None   # feedback.enabled?
+def _learning_log_html(profile, db) -> str               # histórico (interface)
+class FeedbackDB(path=None):               # SQLite com locking retry (WAL)
+    .history(profile, limit=50, base=None) -> list[RunRecord]
+    .latest_ids(profile, limit=5) -> list[int]
+    .nudges(profile_runs, nudge_params, factor) -> ConfigNudge  # regras
+    .store_run(kind, profile, config, params, stars, source, metrics) -> RunRecord
+    .apply_nudge(config, nudge) -> AstroFrameConfig
+```
+
+- Banco SQLite em `~/.astroframe/feedback.db` (ou `$ASTROFRAME_FEEDBACK_DB`);
+  criado ao primeiro uso, com retry em base bloqueada e `max_history` por perfil.
+- `apply_learned` devolve a config original se não houver histórico (ou a
+  `judicial_override`/`factor` for nula); regras: avaliações boas e consistentes
+  suavizam o ajuste (`consistency_weight`), avaliações más aplicam denoise extra
+  com ruído (métricas >`1.0`), coroa fraca aumenta o brilho do polimento, disco
+  pequeno reduz os raios do detector; os valores são limitados aos intervalos
+  válidos.
+- `FeedbackDB.default_path() -> Path`, `.path -> Path`, `.close()`.

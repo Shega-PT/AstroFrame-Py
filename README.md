@@ -11,7 +11,10 @@ Estabilização geométrica e melhoria automática de fotos e vídeos de eclipse
 - **Lucky imaging** — descarte de frames borrados por variância do Laplaciano, com limiar estimado estatisticamente a partir do próprio vídeo.
 - **Stacking** — combinação (mediana ou média) dos N melhores frames, alinhados por centralização, para reduzir ruído.
 - **Anti-trepidação temporal** — suavização do centroide (EMA) e reutilização do último deslocamento válido quando um frame não tem deteção.
-- **Interface Gradio** — dois separadores: **Imagem** (Antes/Depois, sliders, zoom na coroa/borda) e **Vídeo** (processamento ao vivo com o círculo do disco detetado, preview final em frames espaçados e exportação opcional). Ao carregar um vídeo, os **metadados** são lidos (ffprobe/OpenCV/EXIF) e os **parâmetros são sugeridos automaticamente** (ISO → denoising, resolução → raios do detector, bitrate → compressão), mantendo-se editáveis.
+- **Detecção de múltiplos discos** — além do disco principal, são detetados os **reflexos** (Hough + contornos); o polimento elimina os reflexos e o vídeo ao vivo mostra-os a vermelho.
+- **Polimento e avaliação automática** — `polish_image()` dá brilho ao disco mantendo a coroa; `score_image()` atribui **estrelas (0–5)** ao resultado (ruído, contraste, tamanho e cor da coroa).
+- **Aprendizagem por feedback** — cada execução fica em SQLite; par além da avaliação automática, pode avaliar manualmente (0–5 estrelas) e o AstroFrame **ajusta os sliders automaticamente** na próxima execução com o mesmo perfil de câmara, mostrando o histórico/log no próprio interface.
+- **Interface Gradio** — dois separadores: **Imagem** (Antes/Depois, sliders, zoom na coroa/borda) e **Vídeo** (processamento ao vivo com os discos detetados, preview final em frames espaçados e exportação opcional). Ao carregar um vídeo, os **metadados** são lidos (ffprobe/OpenCV/EXIF) e os **parâmetros são sugeridos automaticamente** (ISO → denoising, resolução → raios do detector, bitrate → compressão), mantendo-se editáveis.
 - **CLI** — lote de fotos, vídeos (estabilizar/melhorar/stack), logs e barra de progresso.
 
 ## Instalação
@@ -67,7 +70,7 @@ no mesmo processo, a cada clique em **Processar**). Opções: `--config`,
 ## Desenvolvimento
 
 ```bash
-pytest                      # 131 testes (pixel-tests com imagens sintéticas)
+pytest                      # 205 testes (pixel-tests com imagens sintéticas)
 pytest --cov=astroframe     # cobertura (100% do pacote)
 ruff check .                # lint
 ruff format .               # formatação

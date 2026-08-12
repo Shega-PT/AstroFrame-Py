@@ -14,7 +14,8 @@ from astroframe import __version__
 from astroframe.config import AstroFrameConfig
 from astroframe.core.enhancer import enhance_image
 from astroframe.core.pipeline import process_path
-from astroframe.core.stabilizer import AntiJitterStabilizer, center_and_stabilize
+from astroframe.core.polish import polish_image
+from astroframe.core.stabilizer import AntiJitterStabilizer, DiskDetection, center_and_stabilize
 from astroframe.video.reader import FrameReader
 from astroframe.video.select import sharpness
 from astroframe.video.stacking import stack_frames
@@ -102,6 +103,12 @@ def process_video(
                     if mode == "stabilize"
                     else enhance_image(stabilized, config, use_denoise=not fast)
                 )
+                if (detection := engine.last_detection) is not None:
+                    frame_out = polish_image(
+                        frame_out,
+                        DiskDetection(reader.size[0] // 2, reader.size[1] // 2, detection.radius),
+                        config,
+                    )
                 writer.write(frame_out)
         finally:
             writer.release()

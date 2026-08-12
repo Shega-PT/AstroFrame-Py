@@ -10,6 +10,7 @@ import cv2
 import numpy as np
 import pytest
 
+from astroframe import __version__
 from astroframe.config import AstroFrameConfig
 from astroframe.ui.cli import build_parser, main, process_images, process_video
 from tests.helpers import make_disk_image
@@ -200,7 +201,7 @@ def test___main___via_python_m_imprime_versao():
         timeout=60,
     )
     assert result.returncode == 0
-    assert "0.2.0" in result.stdout
+    assert __version__ in result.stdout
 
 
 def test___main___clicli_executa_como_script(monkeypatch):

@@ -1,11 +1,23 @@
-"""IA opcional (interpolação de movimento RIFE).
+"""IA do AstroFrame.
 
-Este módulo não é importado por defeito em lado nenhum da pipeline e
-requer PyTorch (extra opcional `astroframe[rife]`).
+- `rife` — interpolação de movimento opcional (requer PyTorch, extra
+  `astroframe[rife]`); não é importada por defeito.
+- `score` — avaliação automática da qualidade (0–5 estrelas) com métricas.
+- `feedback` — banco local de aprendizagem (recompensa/punição por estrelas).
 """
 
 from __future__ import annotations
 
-from astroframe.ai.rife import RifeInterpolator
+from astroframe.ai.feedback import FeedbackDB, apply_learned, nudge_params, record_run
+from astroframe.ai.score import StarRating, score_from_stars, score_image, stars_text
 
-__all__ = ["RifeInterpolator"]
+__all__ = [
+    "FeedbackDB",
+    "StarRating",
+    "apply_learned",
+    "nudge_params",
+    "record_run",
+    "score_from_stars",
+    "score_image",
+    "stars_text",
+]

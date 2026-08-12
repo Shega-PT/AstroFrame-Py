@@ -5,6 +5,38 @@ Todas as mudanças notáveis do AstroFrame serão documentadas neste ficheiro.
 O formato segue [Keep a Changelog](https://keepachangelog.com/pt-PT/1.1.0/),
 e o versionamento [SemVer](https://semver.org/lang/pt-BR/).
 
+## [0.3.0] - 2026-08-13
+
+### Adicionado
+
+- **Detecção de múltiplos discos** (`find_all_disks` em `core/stabilizer.py`):
+  em vez de apenas o principal, são detetados o disco principal e os seus
+  **reflexos** (Hough + contornos, com fusão de duplicados e preservação do
+  mais luminoso a cada centro). O estabilizador continua a usar o principal e
+  mantém a última detecção em frames sem disco (`last_detection`).
+- **Polimento** (`core/polish.py`): `polish_image()` aplica brilho ao disco
+  principal (mantendo a coroa desfocada), remoção dos reflexos e é usado no
+  preview/frame final e no vídeo exportado.
+- **Avaliação automática** (`ai/score.py`): `score_image()` calcula estrelas
+  (0–5) a partir de ruído, contraste, tamanho do disco e cor da coroa; a
+  interface mostra o resultado em "Avaliação automática" (imagem **e** vídeo).
+- **Base de aprendizagem por feedback** (`ai/feedback.py`): cada execução fica
+  registada (perfil de câmara + parâmetros + métricas + avaliação); o
+  utilizador pode avaliar manualmente (0–5 estrelas) e o sistema **ajusta os
+  sliders automaticamente** nas próximas execuções (mais suave com boas
+  avaliações, mais forte com más; denoise extra para ruído, brilho para
+  coroa fraca, etc.). Log de aprendizagem com o histórico e as razões em SQLite
+  (variável `ASTROFRAME_FEEDBACK_DB` para localização).
+- **Vídeos sem disco**: o pipeline estabiliza/preview pula o polimento e a
+  avaliação funciona sem detecção (antes ocorria falha).
+- Suíte expandida para **205 testes com cobertura de 100%** do pacote.
+
+### Documentação
+
+- `docs/USO.md`: avaliação automática/manual, log de aprendizagem e secção de
+  vídeo reescrita; `docs/API.md` com `find_all_disks`, `polish_image`,
+  `score_image` e o novo pacote `ai/`.
+
 ## [0.2.0] - 2026-08-12
 
 ### Adicionado

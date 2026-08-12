@@ -91,6 +91,59 @@ class StackingConfig:
 
 
 @dataclass
+class PolishConfig:
+    """Polimento final: fundo preto, contorno redondo e remoção de reflexos.
+
+    `corona_scale` é o raio mantido em torno do disco (1.0 = só o disco,
+    1.6 = disco + coroa). `feather` é a fração do raio usada para suavizar
+    o contorno (limbo "perfeito"); `reflection_min_radius` é o raio mínimo
+    (px) dos círculos-ghost considerados reflexos a remover.
+    """
+
+    enabled: bool = True
+    corona_scale: float = 1.6
+    feather: float = 0.02
+    black_background: bool = True
+    remove_reflections: bool = True
+    reflection_min_radius: int = 8
+
+
+@dataclass
+class ScoreConfig:
+    """Pesos da avaliação automática (0–5 estrelas) e limiares de recompensa.
+
+    Cada peso multiplica a respetiva métrica (0–1); `limb_gain`/`edge_radius`
+    controlam a máscara de brilho usada para medir a redondeza do limbo.
+    """
+
+    background_weight: float = 0.30
+    limb_weight: float = 0.30
+    noise_weight: float = 0.15
+    contrast_weight: float = 0.15
+    reflection_weight: float = 0.10
+    limb_min_dark: float = 0.15
+    limb_gain: float = 4.0
+    edge_radius: float = 1.05
+
+
+@dataclass
+class FeedbackConfig:
+    """Aprendizagem por estrelas: recompensa/punição persistentes.
+
+    `db_path` aponta para a base local (SQLite) onde cada utilização é
+    registada como uma linha (log de ajustes: o que mudou, como e porquê).
+    `learning_rate` é a fração do delta aplicado por execução e
+    `user_weight` o multiplicador quando o utilizador avalia manualmente.
+    """
+
+    enabled: bool = True
+    db_path: str = "~/.astroframe/feedback.db"
+    learning_rate: float = 0.3
+    user_weight: float = 2.0
+    history_limit: int = 12
+
+
+@dataclass
 class AstroFrameConfig:
     clahe: CLAHEConfig = field(default_factory=CLAHEConfig)
     denoise: DenoiseConfig = field(default_factory=DenoiseConfig)
@@ -98,6 +151,9 @@ class AstroFrameConfig:
     stabilizer: StabilizerConfig = field(default_factory=StabilizerConfig)
     lucky: LuckyConfig = field(default_factory=LuckyConfig)
     stacking: StackingConfig = field(default_factory=StackingConfig)
+    polish: PolishConfig = field(default_factory=PolishConfig)
+    score: ScoreConfig = field(default_factory=ScoreConfig)
+    feedback: FeedbackConfig = field(default_factory=FeedbackConfig)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

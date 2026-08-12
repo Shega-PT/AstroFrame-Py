@@ -69,8 +69,20 @@ def _effective_radius_limits(height: int, width: int, cfg) -> tuple[int, int]:
 def find_disk_center(image: np.ndarray, config: AstroFrameConfig | None = None) -> DiskDetection | None:
     """Devolve o centro/raio do disco solar/lunar, ou None se não for detetado.
 
-    Em frames grandes a deteção corre em meia-resolução e o resultado é
-    re-escalado (melhora a velocidade sem perder precisão).
+    É o melhor candidato de `find_all_disks` — em frames grandes a deteção
+    corre em meia-resolução e o resultado é re-escalado.
+    """
+    disks = find_all_disks(image, config)
+    return disks[0] if disks else None
+
+
+def find_all_disks(image: np.ndarray, config: AstroFrameConfig | None = None) -> list[DiskDetection]:
+    """Todos os discos candidatos detetados, ordenados por plausibilidade.
+
+    O primeiro é o disco principal (Sol/Lua); os seguintes são normalmente
+    reflexos internos da lente (ghosts) — a UI desenha-os a vermelho e o
+    polimento pode removê-los como ruído. Ordenação: raio decrescente
+    (contornos) ou confiança Hough decrescente, sempre raio decrescente.
     """
     config = config or AstroFrameConfig()
     cfg = config.stabilizer
@@ -78,7 +90,7 @@ def find_disk_center(image: np.ndarray, config: AstroFrameConfig | None = None) 
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     height, width = gray.shape[:2]
     if min(height, width) < _MIN_DETECTABLE_DIM:
-        return None
+        return []
 
     scale = 1.0
     if min(height, width) >= _HALF_RES_THRESHOLD:
@@ -87,6 +99,8 @@ def find_disk_center(image: np.ndarray, config: AstroFrameConfig | None = None) 
 
     blurred = cv2.GaussianBlur(gray, (cfg.gaussian_kernel_size, cfg.gaussian_kernel_size), cfg.gaussian_sigma)
     min_radius, max_radius = _effective_radius_limits(*gray.shape[:2], cfg)
+
+    disks: list[DiskDetection] = []
 
     circles = cv2.HoughCircles(
         blurred,
@@ -100,9 +114,9 @@ def find_disk_center(image: np.ndarray, config: AstroFrameConfig | None = None) 
     )
     if circles is not None:
         circles = np.uint16(np.around(circles))
-        x, y, r = max(circles[0], key=lambda c: int(c[2]))
-        cx, cy = _intensity_centroid(gray, int(x), int(y), int(r))
-        return DiskDetection(int(cx / scale), int(cy / scale), int(r / scale))
+        for x, y, r in sorted(circles[0], key=lambda c: int(c[2]), reverse=True):
+            cx, cy = _intensity_centroid(gray, int(x), int(y), int(r))
+            disks.append(DiskDetection(int(cx / scale), int(cy / scale), int(r / scale)))
 
     if cfg.contour_fallback:
         _, thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
@@ -114,9 +128,12 @@ def find_disk_center(image: np.ndarray, config: AstroFrameConfig | None = None) 
                 cx = int(moments["m10"] / moments["m00"] / scale)
                 cy = int(moments["m01"] / moments["m00"] / scale)
                 (_, _), radius = cv2.minEnclosingCircle(largest)
-                return DiskDetection(cx, cy, int(radius / scale))
+                found = DiskDetection(cx, cy, int(radius / scale))
+                if not any(abs(d.cx - found.cx) + abs(d.cy - found.cy) < 4 for d in disks):
+                    disks.append(found)
 
-    return None
+    disks.sort(key=lambda d: d.radius, reverse=True)
+    return disks
 
 
 def _auto_crop(stabilized: np.ndarray, dx: int, dy: int, radius: int, cfg) -> tuple[np.ndarray, float]:
@@ -182,10 +199,28 @@ class AntiJitterStabilizer:
         self.alpha = alpha if alpha is not None else self.config.stabilizer.jitter_alpha
         self._smooth: tuple[float, float] | None = None
         self._radius: int | None = None
+        self._all_disks: list[DiskDetection] = []
+        self._last_detection: DiskDetection | None = None
+
+    @property
+    def last_all_disks(self) -> list[DiskDetection]:
+        """Todos os discos detetados no frame mais recente (principal + reflexos)."""
+        return list(self._all_disks)
+
+    @property
+    def last_detection(self) -> DiskDetection | None:
+        """Última posição/raio conhecidos do disco principal (mesmo em frames sem deteção)."""
+        if self._smooth is None:
+            return None
+        center = DiskDetection(int(round(self._smooth[0])), int(round(self._smooth[1])), self._radius or 0)
+        if self._last_detection is None:
+            return center
+        return DiskDetection(center.cx, center.cy, self._last_detection.radius)
 
     def stabilize(self, frame: np.ndarray) -> tuple[np.ndarray, DiskDetection | None]:
         height, width = frame.shape[:2]
-        detection = find_disk_center(frame, self.config)
+        all_disks = find_all_disks(frame, self.config)
+        detection = all_disks[0] if all_disks else None
 
         if detection is not None:
             if self._smooth is None:
@@ -196,9 +231,13 @@ class AntiJitterStabilizer:
                     self.alpha * detection.cy + (1.0 - self.alpha) * self._smooth[1],
                 )
             self._radius = detection.radius
+            self._last_detection = detection
         elif self._smooth is None:
+            self._all_disks = []
             return frame, None
 
+        if all_disks:
+            self._all_disks = all_disks
         dx = width // 2 - int(round(self._smooth[0]))
         dy = height // 2 - int(round(self._smooth[1]))
         radius = self._radius if self._radius is not None else 0

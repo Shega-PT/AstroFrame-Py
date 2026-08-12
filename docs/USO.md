@@ -61,10 +61,18 @@ A interface tem dois separadores:
 
 - **Entrada** — carregar a foto/frame (formato arbitrátrio de imagem).
 - **Estabilizado** — disco centralizado (com círculo verde do disco detetado).
-- **Processado** — CLAHE + denoising + nitidez.
+- **Processado** — CLAHE + denoising + nitidez + **polimento** (brilho no disco
+  principal, coroa preservada e reflexos removidos).
 - **Zoom** — ampliação centrada na coroa/borda.
-- **Parâmetros** — CLAHE clip limit, força do denoising, nitidez e zoom,
-  com valores iniciais vindos do `config.yaml`.
+- **Parâmetros** — CLAHE clip limit, força do denoising, nitidez, zoom e escala
+  da coroa mantida no polimento, com valores iniciais vindos do `config.yaml`.
+- **Avaliação automática** — estrelas (0–5) calculadas a partir de ruído,
+  contraste, tamanho do disco e cor da coroa.
+- **Avaliação manual + aprendizagem** — deslize o número de estrelas que o
+  resultado merece e carregue em *Guardar avaliação manual*: a execução fica
+  gravada e, na próxima vez com o mesmo perfil de câmara, os sliders **ajustam-se
+  automaticamente** (com leve correção para boas avaliações, forte para más).
+  O separador *Log de aprendizagem* mostra o histórico e o porquê de cada ajuste.
 
 ### Separador Vídeo
 
@@ -73,15 +81,28 @@ A interface tem dois separadores:
    para vídeo, EXIF (PIL) para imagens — e são mostrados no painel
    **Proporção / qualidade / sugestões** (resolution, aspect ratio, fps, codec,
    bitrate, ISO, exposição, câmara). Os **sliders são pré-preenchidos** com as
-   sugestões de otimização, mas continuam editáveis.
+   sugestões de otimização **e com o que a IA já aprendeu** (avaliações
+   anteriores do mesmo perfil), mas continuam editáveis.
 2. **Processar vídeo** — enquanto a pipeline corre:
-   - **Esquerda (ao vivo)** — o frame original em tempo real com o círculo
-     verde (bounding box) do disco do Sol/Lua detetado.
+   - **Esquerda (ao vivo)** — o frame original em tempo real com os círculos
+     do disco detetado: **verde** = disco principal, **vermelho** = reflexos.
    - **Direita (resultado final)** — em frames bem espaçados, o resultado com
-     todas as correções (estabilizado + CLAHE + denoising + nitidez).
-   - Barra de estado com o frame atual e o progresso.
+     todas as correções (estabilizado + CLAHE + denoising + nitidez +
+     polimento/remoção de reflexos).
+   - Barra de estado com o frame atual e o progresso, e **avaliação automática**
+     do resultado final.
 3. **Exportação opcional** — marcar *"Exportar vídeo processado (.mp4, sem
    áudio)"* para gravar o vídeo completo no fim (mesmo passe, sem saltar frames).
+4. **Avaliação manual + aprendizagem** — tal como no separador Imagem, dê
+   estrelas ao resultado do vídeo; o ajuste é aplicado nos próximos carregamentos
+   do mesmo tipo de vídeo e aparece no log de aprendizagem.
+
+### Base de aprendizagem (onde fica guardado)
+
+As execuções (parâmetros usados, métricas e avaliações) ficam num ficheiro
+SQLite em `~/.astroframe/feedback.db`. Pode mudar o local com a variável de
+ambiente `ASTROFRAME_FEEDBACK_DB` (por exemplo, para partilhar a aprendizagem
+entre várias máquinas).
 
 ## Linha de comando
 
@@ -162,6 +183,23 @@ Todos os campos e tipos:
 | `contour_fallback` | bool | `true` | Fallback por contornos quando o Hough falha |
 | `auto_crop` | bool | `true` | Remove as bordas pretas da translação (sem cortar o disco) |
 | `jitter_alpha` | float | `0.5` | Suavização EMA do centroide (1 = sem suavização) |
+
+### `polish`
+| Campo | Tipo | Padrão | Descrição |
+|---|---|---|---|
+| `brightness` | float | `0.25` | Brilho adicionado ao disco principal (0 = desativado) |
+| `brightness_exponent` | float | `1.2` | Concentra o brilho no centro do disco (maior = mais localizado) |
+| `corona_scale` | float | `1.6` | Região da coroa que não é escurecida (× raio) |
+| `reflection_min_radius` | float | `0.25` | Fração mínima do raio do disco para um reflexo ser removido |
+| `smoothing_kernel_size` | int | `15` | Desfoque do fundo atrás do disco (ímpar) |
+
+### `feedback` (aprendizagem)
+| Campo | Tipo | Padrão | Descrição |
+|---|---|---|---|
+| `enabled` | bool | `true` | Guarda avaliações e aplica o ajuste aprendido aos sliders |
+| `nudge_alpha` | float | `0.3` | Força da correção (0–1): 1 aplicaria logo a avaliação manual na totalidade |
+| `consistency_weight` | float | `0.5` | Maior = correções mais suaves quando as avaliações são boas |
+| `max_history` | int | `1000` | Execuções mantidas por perfil (as mais antigas são apagadas) |
 
 ### `lucky`
 | Campo | Tipo | Padrão | Descrição |

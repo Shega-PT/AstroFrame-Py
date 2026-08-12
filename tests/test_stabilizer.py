@@ -11,6 +11,7 @@ from astroframe.core.stabilizer import (
     AntiJitterStabilizer,
     _intensity_centroid,
     center_and_stabilize,
+    find_all_disks,
     find_disk_center,
 )
 from tests.helpers import center_tolerance, make_disk_image
@@ -96,7 +97,101 @@ def test_deteccao_em_meia_resolucao_para_frames_grandes():
 def test_antijitter_primeiro_frame_sem_deteccao_devolve_inalterado(monkeypatch):
     empty = np.zeros((100, 120, 3), dtype=np.uint8)
     engine = AntiJitterStabilizer(alpha=0.5)
-    monkeypatch.setattr("astroframe.core.stabilizer.find_disk_center", lambda image, config=None: None)
+    monkeypatch.setattr("astroframe.core.stabilizer.find_all_disks", lambda image, config=None: [])
     out, detection = engine.stabilize(empty)
     assert detection is None
     np.testing.assert_array_equal(out, empty)
+
+
+def test_find_all_disks_devolve_multiplos_ordenados_por_raio():
+    image = np.zeros((360, 480, 3), dtype=np.uint8)
+    cv2.circle(image, (300, 200), 90, (200,) * 3, -1)
+    cv2.circle(image, (120, 110), 35, (140,) * 3, -1)
+    config = AstroFrameConfig()
+    config.stabilizer.min_dist = 30
+    disks = find_all_disks(image, config)
+    assert len(disks) >= 2
+    assert disks[0].radius >= disks[1].radius
+    assert abs(disks[0].cx - 300) <= 5
+    assert abs(disks[1].cx - 120) <= 12
+
+
+def test_find_all_disks_imagem_vazia_nao_engana():
+    assert find_all_disks(np.zeros((100, 100, 3), dtype=np.uint8), AstroFrameConfig()) == []
+
+
+def test_find_all_disks_com_contorno_fallback_adiciona_sem_duplicar(monkeypatch):
+    image, cx, cy = make_disk_image()
+    config = AstroFrameConfig()
+    config.stabilizer.param2 = 300
+    config.stabilizer.contour_fallback = True
+    disks = find_all_disks(image, config)
+    assert disks, "contorno devia recuperar o disco"
+    assert abs(disks[0].cx - cx) <= 5
+
+
+def test_find_all_disks_duplicados_hough_contorno_nao_repetem(monkeypatch):
+    image, cx, cy = make_disk_image()
+
+    def fake_hough(gray, *args, **kwargs):
+        return np.array([[[cx, cy, 90]]], dtype=np.float64)
+
+    monkeypatch.setattr("astroframe.core.stabilizer.cv2.HoughCircles", fake_hough)
+    config = AstroFrameConfig()
+    config.stabilizer.min_radius = 20
+    disks = find_all_disks(image, config)
+    centers = [(d.cx, d.cy) for d in disks]
+    assert centers.count((cx, cy)) == 1
+
+
+def test_antijitter_last_detection_mantido_em_frame_sem_deteccao(monkeypatch):
+    image1, cx, cy = make_disk_image()
+    blank = np.zeros_like(image1)
+    engine = AntiJitterStabilizer(alpha=0.5)
+    real = find_all_disks
+
+    def fake(image, config=None):
+        if image is blank:
+            return []
+        return real(image, config)
+
+    monkeypatch.setattr("astroframe.core.stabilizer.find_all_disks", fake)
+    stabilized, detection = engine.stabilize(image1)
+    assert detection is not None
+    assert engine.last_detection is not None
+    out, detection2 = engine.stabilize(blank)
+    assert detection2 is None
+    assert engine.last_detection is not None
+    assert engine.last_detection.radius == 90
+
+
+def test_antijitter_last_detection_properties():
+    engine = AntiJitterStabilizer(alpha=0.5)
+    assert engine.last_detection is None
+    assert engine.last_all_disks == []
+
+
+def test_antijitter_last_detection_suave_sem_deteccao_guardada():
+    engine = AntiJitterStabilizer()
+    engine._smooth = (120.0, 80.0)
+    det = engine.last_detection
+    assert det is not None
+    assert det.cx == 120 and det.cy == 80
+
+
+def test_antijitter_last_all_disks_retidos_sem_deteccao(monkeypatch):
+    image1, cx, cy = make_disk_image()
+    blank = np.zeros_like(image1)
+    engine = AntiJitterStabilizer(alpha=0.5)
+    real = find_all_disks
+
+    def fake(image, config=None):
+        if image is blank:
+            return []
+        return real(image, config)
+
+    monkeypatch.setattr("astroframe.core.stabilizer.find_all_disks", fake)
+    engine.stabilize(image1)
+    engine.stabilize(blank)
+    assert engine.last_all_disks
+    assert engine.last_all_disks[0].radius >= 85
