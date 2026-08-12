@@ -10,6 +10,7 @@ reutiliza o último deslocamento válido quando um frame não tem deteção.
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass
 
 import cv2
@@ -133,7 +134,19 @@ def find_all_disks(image: np.ndarray, config: AstroFrameConfig | None = None) ->
                     disks.append(found)
 
     disks.sort(key=lambda d: d.radius, reverse=True)
-    return disks
+    unique: list[DiskDetection] = []
+    for disk in disks:
+        if any(_is_concentric_duplicate(disk, kept) for kept in unique):
+            continue
+        unique.append(disk)
+    return unique
+
+
+def _is_concentric_duplicate(candidate: DiskDetection, kept: DiskDetection) -> bool:
+    """Círculo interior quase-concêntrico com um disco já aceite (é o mesmo
+    bordo detetado duas vezes — ex.: silhueta da Lua dentro do Sol)."""
+    tolerance = max(2, int(0.12 * kept.radius))
+    return math.hypot(candidate.cx - kept.cx, candidate.cy - kept.cy) <= tolerance
 
 
 def _auto_crop(stabilized: np.ndarray, dx: int, dy: int, radius: int, cfg) -> tuple[np.ndarray, float]:

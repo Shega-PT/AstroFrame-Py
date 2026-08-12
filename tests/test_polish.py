@@ -125,6 +125,36 @@ def test_polish_imagem_escala_cinza():
     assert out[5, 5] == 0
 
 
+def test_polish_circulo_interior_concentrico_nao_apaga_centro(monkeypatch):
+    image = np.full((300, 360, 3), 60, dtype=np.uint8)
+    main = DiskDetection(180, 150, 80)
+    inner = DiskDetection(183, 152, 40)
+    cfg = AstroFrameConfig()
+    cfg.polish.corona_scale = 1.0
+    monkeypatch.setattr(
+        "astroframe.core.polish.find_all_disks",
+        lambda img, config=None: [main, inner],
+    )
+    out = polish_image(image, main, cfg)
+    assert out[150, 180].tolist() == [60, 60, 60]
+    assert out[130, 180].tolist() == [60, 60, 60]
+
+
+def test_polish_reflexo_fora_do_disco_ainda_removido(monkeypatch):
+    image = np.full((300, 360, 3), 60, dtype=np.uint8)
+    main = DiskDetection(180, 150, 80)
+    ghost = DiskDetection(300, 60, 30)
+    cfg = AstroFrameConfig()
+    cfg.polish.corona_scale = 1.0
+    monkeypatch.setattr(
+        "astroframe.core.polish.find_all_disks",
+        lambda img, config=None: [main, ghost],
+    )
+    out = polish_image(image, main, cfg)
+    assert out[60, 300].tolist() == [0, 0, 0]
+    assert out[150, 180].tolist() == [60, 60, 60]
+
+
 def test_polish_ignora_reflexos_inferiores_ao_minimo(monkeypatch):
     image = np.full((300, 360, 3), 60, dtype=np.uint8)
     main = DiskDetection(180, 150, 80)

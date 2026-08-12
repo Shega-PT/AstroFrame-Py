@@ -17,6 +17,7 @@ falha no fluxo principal).
 from __future__ import annotations
 
 import logging
+import math
 
 import cv2
 import numpy as np
@@ -79,6 +80,8 @@ def polish_image(
             if disk.cx == cx and disk.cy == cy:
                 continue
             if abs(disk.cx - cx) < 2 and abs(disk.cy - cy) < 2:
+                continue
+            if math.hypot(disk.cx - cx, disk.cy - cy) < radius:
                 continue
             refl = _feather_mask((height, width), disk.cx, disk.cy, disk.radius, cfg.feather)
             keep = 1.0 - refl if keep is None else np.minimum(keep, 1.0 - refl)

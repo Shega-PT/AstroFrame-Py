@@ -31,6 +31,16 @@ e o versionamento [SemVer](https://semver.org/lang/pt-BR/).
   avaliação funciona sem detecção (antes ocorria falha).
 - Suíte expandida para **205 testes com cobertura de 100%** do pacote.
 
+### Corrigido
+
+- O polimento **apagava um círculo no centro da imagem**: círculos interiores
+  quase-concêntricos com o disco principal (ex.: silhueta da Lua dentro do
+  Sol) eram detetados como "reflexos" e removidos — `polish_image` agora
+  só remove reflexos cujo **centro esteja fora do disco principal**, e
+  `find_all_disks` funde círculos concêntricos (tolerância de 12% do raio),
+  evitando duplicados do mesmo bordo nos dois sentidos (polimento e desenho
+  ao vivo).
+
 ### Documentação
 
 - `docs/USO.md`: avaliação automática/manual, log de aprendizagem e secção de
