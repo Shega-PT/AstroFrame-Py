@@ -11,7 +11,7 @@ Estabilização geométrica e melhoria automática de fotos e vídeos de eclipse
 - **Lucky imaging** — descarte de frames borrados por variância do Laplaciano, com limiar estimado estatisticamente a partir do próprio vídeo.
 - **Stacking** — combinação (mediana ou média) dos N melhores frames, alinhados por centralização, para reduzir ruído.
 - **Anti-trepidação temporal** — suavização do centroide (EMA) e reutilização do último deslocamento válido quando um frame não tem deteção.
-- **Interface Gradio** — comparação Antes/Depois, sliders e zoom na coroa/borda; aceita imagens ou vídeos (usa o frame mais nítido do vídeo).
+- **Interface Gradio** — dois separadores: **Imagem** (Antes/Depois, sliders, zoom na coroa/borda) e **Vídeo** (processamento ao vivo com o círculo do disco detetado, preview final em frames espaçados e exportação opcional). Ao carregar um vídeo, os **metadados** são lidos (ffprobe/OpenCV/EXIF) e os **parâmetros são sugeridos automaticamente** (ISO → denoising, resolução → raios do detector, bitrate → compressão), mantendo-se editáveis.
 - **CLI** — lote de fotos, vídeos (estabilizar/melhorar/stack), logs e barra de progresso.
 
 ## Instalação
@@ -29,6 +29,10 @@ Alternativa simples: `pip install -r requirements.txt`. Requer Python 3.10+.
 > `error: externally-managed-environment` (PEP 668). Use sempre a virtualenv acima
 > (`source .venv/bin/activate` antes de instalar), ou force com `--break-system-packages`
 > por sua conta e risco.
+
+> [!TIP]
+> Para metadados de vídeo ricos (codec, bitrate, duração) instale o `ffmpeg`
+> do sistema — sem ele, o AstroFrame usa apenas o OpenCV (resolução/fps/frames).
 
 ## Uso rápido
 
@@ -50,7 +54,7 @@ no mesmo processo, a cada clique em **Processar**). Opções: `--config`,
 ## Documentação
 
 - [docs/USO.md](docs/USO.md) — guia prático: CLI, configuração YAML campo a campo, interface e workflow de vídeo.
-- [docs/API.md](docs/API.md) — referência dos módulos `core/`, `video/`, `ai/` e `config.py`.
+- [docs/API.md](docs/API.md) — referência dos módulos `core/`, `video/`, `meta/`, `ai/` e `config.py`.
 - [docs/Arquitetura.md](docs/Arquitetura.md) — especificação original da solução (referência).
 
 ## Limitações conhecidas
@@ -63,9 +67,10 @@ no mesmo processo, a cada clique em **Processar**). Opções: `--config`,
 ## Desenvolvimento
 
 ```bash
-pytest          # 43 testes (pixel-tests com imagens sintéticas)
-ruff check .    # lint
-ruff format .   # formatação
+pytest                      # 131 testes (pixel-tests com imagens sintéticas)
+pytest --cov=astroframe     # cobertura (100% do pacote)
+ruff check .                # lint
+ruff format .               # formatação
 ```
 
 CI (GitHub Actions): pytest em Python 3.10/3.12 + ruff, em `.github/workflows/ci.yml`.
@@ -76,7 +81,8 @@ CI (GitHub Actions): pytest em Python 3.10/3.12 + ruff, em `.github/workflows/ci
 src/astroframe/
 ├── core/    estabilizador geométrico, melhoria automática e pipeline
 ├── video/   leitura de frames, lucky imaging e stacking
-├── ui/      interface Gradio e CLI
+├── meta/    leitura de metadados (ffprobe/OpenCV/EXIF) e sugestões de parâmetros
+├── ui/      interface Gradio (Imagem/Vídeo) e CLI
 └── ai/      interpolação RIFE opcional (requer PyTorch)
 ```
 

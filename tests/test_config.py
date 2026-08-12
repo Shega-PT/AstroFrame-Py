@@ -38,6 +38,30 @@ def test_min_sharpness_null_mantem_se_none(tmp_path):
     assert AstroFrameConfig.from_yaml(path).lucky.min_sharpness is None
 
 
+def test_campo_opcional_aceita_numero(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text("lucky:\n  min_sharpness: 30.5\n", encoding="utf-8")
+    assert AstroFrameConfig.from_yaml(path).lucky.min_sharpness == pytest.approx(30.5)
+
+
+def test_campo_opcional_com_tipo_invalido_avisa(tmp_path, caplog):
+    path = tmp_path / "config.yaml"
+    path.write_text("lucky:\n  min_sharpness: 'abc'\n", encoding="utf-8")
+    with caplog.at_level(logging.WARNING):
+        cfg = AstroFrameConfig.from_yaml(path)
+    assert cfg.lucky.min_sharpness == "abc"
+    assert any("min_sharpness" in record.getMessage() for record in caplog.records)
+
+
+def test_campo_nao_opcional_null_avisa_e_mantem(tmp_path, caplog):
+    path = tmp_path / "config.yaml"
+    path.write_text("denoise:\n  h: null\n", encoding="utf-8")
+    with caplog.at_level(logging.WARNING):
+        cfg = AstroFrameConfig.from_yaml(path)
+    assert cfg.denoise.h is None
+    assert any("tipo inesperado" in record.getMessage() for record in caplog.records)
+
+
 @pytest.mark.parametrize(
     "yaml_text, key",
     [

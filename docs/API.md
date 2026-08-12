@@ -117,6 +117,63 @@ select_best(frames, n_best, config=None) -> list[np.ndarray]
 - `stack_frames`: mediana (`use_median=True`) ou média; avisa sobre memória
   acima de 1080p com muitos frames.
 
+## `astroframe.meta`
+
+Leitura de metadados e sugestões de parâmetros (implementação própria, MIT —
+inspirada na mesma ideia do MetadataExplorer, sem código copiado).
+
+### `meta.extractor`
+
+```python
+@dataclass(frozen=True)
+class MediaMetadata:
+    path: str | None
+    kind: str                       # "image" | "video"
+    width: int | None
+    height: int | None
+    aspect_ratio: float | None      # largura / altura
+    fps: float | None
+    frame_count: int | None
+    duration: float | None          # segundos
+    codec: str | None
+    bitrate: int | None             # bits/segundo
+    format_name: str | None
+    iso: int | None                 # sensibilidade ISO (EXIF)
+    exposure_time: float | None     # segundos
+    focal_length: float | None      # mm
+    aperture: float | None          # f/ número
+    camera_make: str | None
+    camera_model: str | None
+    captured_at: str | None         # data/hora EXIF
+    raw: dict                       # tudo o que foi lido (source→chave→valor)
+
+extract_metadata(path) -> MediaMetadata
+```
+
+- Vídeo: cascata **ffprobe** (se instalado; codec/bitrate/duração/formato) →
+  **OpenCV** (resolução/fps/frames — sempre disponível).
+- Imagem: EXIF via PIL (ISO, exposição, abertura, distância focal, câmara, data).
+- `ValueError` se o caminho não existir; `kind="unknown"` com o que der para
+  ler se nem ffprobe nem OpenCV abrirem o ficheiro.
+- `aspect_ratio` arredondado a 3 casas (0.0 → `None`); o texto de
+  apresentação (ex. `5616×3744 · 3:2`) é `aspect_text` em `extractor` (16:9,
+  3:2, 4:3, 1:1, quadrado ou mudança decimal).
+
+### `meta.suggest`
+
+```python
+suggest_config(meta: MediaMetadata) -> AstroFrameConfig
+summary_fields(meta: MediaMetadata) -> dict[str, str]
+```
+
+- Heurísticas: raios de deteção proporcionais à resolução (`min = 8%` do
+  semieixo menor, `max = 45%`); `denoise.h` escalado pelo ISO (`2 + ISO/1600*4`,
+  limitado a `[2, 15]`, usado por defeito se o config não o defina) com
+  `unsharp` 0.4/0.6; em vídeos muito comprimidos (< 0.1 bit/pixel) o denoise é
+  reduzido ~30% (menos risco de "plastificar").
+- `summary_fields` devolve o dicionário exibido no painel "Proporção /
+  qualidade / sugestões" da interface.
+
 ## `astroframe.ui`
 
 ### `ui.gradio_app`
@@ -124,14 +181,31 @@ select_best(frames, n_best, config=None) -> list[np.ndarray]
 ```python
 build_app(config=None) -> gr.Blocks
 run(config_path=None, host="127.0.0.1", port=7860, share=False, inbrowser=True) -> None
+
+def inspect_video_upload(video_path, config) -> tuple[str, dict, dict]  # html, raw, updates
+def process_video(video_path, config, export: bool = False) -> Generator
+def process_image_input(image, config) -> tuple[np.ndarray, np.ndarray, str]
 ```
 
 - A UI converte RGB→BGR na entrada e BGR→RGB nas saídas (funções `_to_pipeline`
   / `_from_pipeline`); os valores e o pipeline são partilhados com a CLI.
-- Aceita imagens (`gr.Image`) e vídeos (`gr.Video`): para vídeos, o frame mais
-  nítido é selecionado com `_best_frame_from_video` (lucky imaging via
-  `video.select.sharpness`) e processado como imagem. Sem frames legíveis,
-  levanta `ValueError`.
+- Dois separadores: **Imagem** (entrada, estabilizado, processado, zoom,
+  sliders) e **Vídeo** (upload, painel de metadados, sliders pré-preenchidos,
+  processamento ao vivo, exportação opcional).
+- `inspect_video_upload` chama `meta.extractor` + `meta.suggest` e devolve,
+  respetivamente: HTML do resumo (proporção/qualidade/sugestões), os metadados
+  crus e os `update()` dos sliders com os valores sugeridos.
+- `process_video` é um **gerador** (consumido pelo `gr.Progress.track` do
+  Gradio); a cada frame devolve:
+  `(live_rgb, preview_rgb, out_video_path_ou_None, status, progress)` —
+  `live` é o frame original em tempo real com o círculo do disco detetado
+  (`_draw_detection`), `preview` é o resultado final e é mostrado apenas em
+  frames espaçados (`_preview_every`, escolha autónoma de `spacing`), os outros
+  campos com `None`/fração. Sem disco detetado no 1.º frame, para com
+  `ValueError`. Se `export=True`, escreve o vídeo completo (.mp4, codec `mp4v`,
+  sem áudio) e devolve o caminho no último frame.
+- `process_image_input` é o antigo handler de imagem refatorado para função de
+  módulo testável (devolve estabilizado, processado e o estado como texto).
 - `run()` aceita `inbrowser` para abrir o navegador automaticamente; o ponto de
   entrada único equivalente é `python main.py` na raiz do repositório.
 

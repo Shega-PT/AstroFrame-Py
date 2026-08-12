@@ -44,6 +44,19 @@ def test_enhance_image_imagem_minuscula_nao_crasha():
     assert out.shape == tiny.shape
 
 
+def test_enhance_image_aceita_rgba():
+    image, _, _ = make_disk_image()
+    rgba = cv2.cvtColor(image, cv2.COLOR_BGR2BGRA)
+    out = enhance_image(rgba, AstroFrameConfig())
+    assert out.ndim == 3 and out.shape[2] == 3
+
+
+def test_enhance_image_aceita_bgr_ja_convertido():
+    image, _, _ = make_disk_image()
+    out = enhance_image(image, AstroFrameConfig())
+    assert out.shape == image.shape
+
+
 def test_enhance_image_pode_omitir_denoise():
     image, _, _ = make_disk_image(add_noise=True)
     out = enhance_image(image, AstroFrameConfig(), use_denoise=False)

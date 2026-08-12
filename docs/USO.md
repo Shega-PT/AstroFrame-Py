@@ -55,17 +55,33 @@ astroframe serve --config config.yaml --port 7861 --share
 > `--share` cria um URL público temporário (via túnel do Gradio) — não o use
 > com material sensível.
 
-Na interface:
+A interface tem dois separadores:
 
-- **Entrada — imagem** — carregar a foto/frame (formato arbitrátrio de imagem).
-- **Entrada — vídeo** — carregar um `.mp4/.avi/.mov`; o **frame mais nítido** do
-  vídeo é selecionado automaticamente (lucky imaging, mesma medição do pipeline)
-  e processado como imagem.
+### Separador Imagem
+
+- **Entrada** — carregar a foto/frame (formato arbitrátrio de imagem).
 - **Estabilizado** — disco centralizado (com círculo verde do disco detetado).
 - **Processado** — CLAHE + denoising + nitidez.
 - **Zoom** — ampliação centrada na coroa/borda.
 - **Parâmetros** — CLAHE clip limit, força do denoising, nitidez e zoom,
   com valores iniciais vindos do `config.yaml`.
+
+### Separador Vídeo
+
+1. **Carregar o vídeo** (`.mp4/.avi/.mov`). Nesse momento os **metadados** são
+   lidos — ffprobe (se instalado; senão apenas OpenCV: resolução/fps/frames)
+   para vídeo, EXIF (PIL) para imagens — e são mostrados no painel
+   **Proporção / qualidade / sugestões** (resolution, aspect ratio, fps, codec,
+   bitrate, ISO, exposição, câmara). Os **sliders são pré-preenchidos** com as
+   sugestões de otimização, mas continuam editáveis.
+2. **Processar vídeo** — enquanto a pipeline corre:
+   - **Esquerda (ao vivo)** — o frame original em tempo real com o círculo
+     verde (bounding box) do disco do Sol/Lua detetado.
+   - **Direita (resultado final)** — em frames bem espaçados, o resultado com
+     todas as correções (estabilizado + CLAHE + denoising + nitidez).
+   - Barra de estado com o frame atual e o progresso.
+3. **Exportação opcional** — marcar *"Exportar vídeo processado (.mp4, sem
+   áudio)"* para gravar o vídeo completo no fim (mesmo passe, sem saltar frames).
 
 ## Linha de comando
 

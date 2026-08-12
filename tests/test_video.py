@@ -83,9 +83,24 @@ def test_stack_frames_erro_com_shapes_diferentes():
         stack_frames([a, b])
 
 
+def test_select_sharp_frames_com_min_sharpness_configurado():
+    config = AstroFrameConfig()
+    sharp, blurred = _sharp_and_blurred()
+    config.lucky.min_sharpness = (sharpness(sharp) + sharpness(blurred)) / 2
+    selected = select_sharp_frames([blurred, sharp], config)
+    assert [index for index, _, _ in selected] == [1]
+
+
 def test_stack_frames_vazio():
     with pytest.raises(ValueError):
         stack_frames([])
+
+
+def test_stack_frames_avisa_acima_de_1080p(caplog):
+    frames = [np.full((1200, 2000, 3), i, dtype=np.uint8) for i in range(12)]
+    result = stack_frames(frames)
+    assert result.shape == (1200, 2000, 3)
+    assert any("muita memória" in record.getMessage() for record in caplog.records)
 
 
 def test_antijitter_reutiliza_deslocamento_sem_deteção():
@@ -131,3 +146,12 @@ def test_antijitter_aplica_ema_no_centroide():
 
     pure_dx = 480 // 2 - detection2.cx
     assert abs(dx) < abs(pure_dx)
+
+
+def test_stack_frames_media_em_vez_de_mediana():
+    stacking = AstroFrameConfig().stacking
+    stacking.use_median = False
+    frames = [np.full((40, 50, 3), i, dtype=np.uint8) for i in range(4)]
+    result = stack_frames(frames, stacking)
+    assert result.shape == (40, 50, 3)
+    assert int(result[0, 0, 0]) == int(np.mean([0, 1, 2, 3]))

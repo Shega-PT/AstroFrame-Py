@@ -5,6 +5,32 @@ Todas as mudanças notáveis do AstroFrame serão documentadas neste ficheiro.
 O formato segue [Keep a Changelog](https://keepachangelog.com/pt-PT/1.1.0/),
 e o versionamento [SemVer](https://semver.org/lang/pt-BR/).
 
+## [0.2.0] - 2026-08-12
+
+### Adicionado
+
+- **Nova interface de vídeo ao vivo** (separador "Vídeo"): o painel esquerdo
+  mostra o vídeo em tempo real conforme é processado, com o círculo (bounding
+  box) do disco detetado; o direito atualiza em frames espaçados o resultado
+  final (estabilizado + CLAHE + denoise + nitidez). Exportação opcional do
+  vídeo processado (.mp4, sem áudio). `_best_frame_from_video` foi substituído
+  por este fluxo completo.
+- **Leitura de metadados** (novo pacote `meta/`, implementação própria MIT):
+  vídeo via cascata ffprobe → OpenCV (codec, bitrate, duração, fps, resolução)
+  e imagem via PIL/EXIF (ISO, exposição, abertura, distância focal, câmara,
+  data); sem dependências novas no pip.
+- **Sugestões automáticas de parâmetros** (`meta/suggest.py`): raios do
+  estabilizador proporcionais à resolução, `denoise.h` escalado pelo ISO,
+  redução de denoise em vídeos com bitrate muito comprimido; aplicadas aos
+  sliders no carregamento do vídeo (mantêm-se editáveis).
+- Painel de "proporção/qualidade" na interface (resolução, aspect ratio, fps,
+  codec, bitrate, ISO, exposição, câmara) + `gr.JSON` com os metadados crus.
+- Interface reorganizada em separadores ("Imagem" / "Vídeo"); o processamento
+  de imagem passou para `process_image_input()` (função de módulo testável).
+- Deteção em meia-resolução coberta e suíte expandida para **131 testes com
+  cobertura de 100%** do pacote (incluindo o RIFE sem PyTorch, via módulo
+  `torch` falso nos testes).
+
 ## [0.1.2] - 2026-08-12
 
 ### Adicionado
