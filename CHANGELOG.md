@@ -5,6 +5,56 @@ Todas as mudanças notáveis do AstroFrame serão documentadas neste ficheiro.
 O formato segue [Keep a Changelog](https://keepachangelog.com/pt-PT/1.1.0/),
 e o versionamento [SemVer](https://semver.org/lang/pt-BR/).
 
+## [0.5.0] - 2026-08-13
+
+### Adicionado
+
+- **Calibração com exemplos** (novo pacote `astroframe/calibration/`):
+  - `scan_samples` varre a pasta de exemplos (`samples/` por omissão)
+    recursivamente — imagens (jpg/png/bmp/tif/webp) entram tal como estão e
+    vídeos (mp4/avi/mov/mkv/m4v) contribuem com **8 frames equidistantes e
+    determinísticos** (reproduzíveis na validação).
+  - `CalibrationStore` guarda o **ground truth manual** em
+    `samples/calibration.json` (JSON v1, chave = path relativo + `#frame`).
+  - `circles_to_layers` / `layers_to_circles` convertem círculos em **camadas
+    RGBA** do `gr.ImageEditor` (arrastar = mover, pincel = adicionar,
+    borracha = remover; um círculo por componente conexa).
+  - `validate_all` compara a deteção automática (`find_all_disks`) com o
+    ground truth em todas as amostras: correspondência greedy por IoU (≥0.5),
+    recall/precisão, IoU médio, erros de centro (px) e raio (%) com sinal,
+    score de calibração 0–100 (recall 0.4 · precisão 0.3 · IoU 0.3) e
+    **sugestões de parâmetros** em PT (ex.: baixar `min_radius` se discos
+    pequenos falham, subir `param2` com deteções falsas).
+- **Interface de calibração** (`astroframe/ui/calibration_app.py`): dropdown
+  de amostras + editor de círculos + botões "Deteção automática", "Guardar
+  ajustes" e "Validar todas as amostras" (tabela por amostra + resumo global +
+  sugestões).
+- **Entradas**: `calibrate.py` na raiz (espelho do `main.py`, com
+  `--samples/--config/--host/--port/--share/--no-browser`) e subcomando
+  `astroframe calibrate` na CLI.
+- `FrameReader.frame_at(index)` — leitura direta de um frame por índice
+  (`CAP_PROP_POS_FRAMES`).
+- `samples/README.md` reescrito com a estrutura recomendada (imagens/vídeos,
+  subpastas por assunto: eclipse, lua, sol, planetas).
+
+### Documentação (multilingue)
+
+- A documentação passou a ser **trilingue**:
+  - `docs/PT/` — `API.md`, `Arquitetura.md`, `USO.md` (movidos, com a secção
+    de calibração); o `CHANGELOG.md` da raiz mantém-se como canónico (PT).
+  - `docs/EN/` — `API.md`, `Architecture.md`, `Usage.md`, `CHANGELOG.md`
+    traduzidos para inglês.
+  - `docs/FR/` — `API.md`, `Architecture.md`, `Usage.md`, `CHANGELOG.md`
+    traduzidos para francês.
+  - `README-EN.md` e `README-FR.md` na raiz (traduções do README); o
+    `README.md` passou a apontar para `docs/PT/` e as versões EN/FR.
+
+### Testes
+
+- Suíte expandida para **~260 testes com cobertura de 100%** do pacote
+  (`tests/test_calibration_{scan,store,circles,validate,app}.py` +
+  `astroframe calibrate` na CLI + `frame_at`).
+
 ## [0.4.0] - 2026-08-13
 
 ### Adicionado
@@ -41,7 +91,7 @@ e o versionamento [SemVer](https://semver.org/lang/pt-BR/).
 
 ### Documentação
 
-- `docs/USO.md` e `docs/API.md` atualizados para o polimento por astros, o
+- `docs/PT/USO.md` e `docs/PT/API.md` atualizados para o polimento por astros, o
   novo `PolishConfig` e a deteção em dois passes; suíte com **221 testes e
   cobertura de 100%**.
 
@@ -83,8 +133,8 @@ e o versionamento [SemVer](https://semver.org/lang/pt-BR/).
 
 ### Documentação
 
-- `docs/USO.md`: avaliação automática/manual, log de aprendizagem e secção de
-  vídeo reescrita; `docs/API.md` com `find_all_disks`, `polish_image`,
+- `docs/PT/USO.md`: avaliação automática/manual, log de aprendizagem e secção de
+  vídeo reescrita; `docs/PT/API.md` com `find_all_disks`, `polish_image`,
   `score_image` e o novo pacote `ai/`.
 
 ## [0.2.0] - 2026-08-12
@@ -135,8 +185,8 @@ e o versionamento [SemVer](https://semver.org/lang/pt-BR/).
 
 - README: secção de instalação com aviso sobre o PEP 668 (Debian/Ubuntu) e
   `python main.py` como primeiro comando de uso rápido.
-- `docs/USO.md`: interface web documentada com `python main.py`.
-- `docs/API.md`: nova assinatura de `run()` com `inbrowser`.
+- `docs/PT/USO.md`: interface web documentada com `python main.py`.
+- `docs/PT/API.md`: nova assinatura de `run()` com `inbrowser`.
 - `.gitignore`: padrões genéricos para vídeos (`*.mp4`, `*.MP4`, `*.MOV`, `*.mkv`).
 
 ## [0.1.0] - 2026-08-12

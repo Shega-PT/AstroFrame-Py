@@ -13,7 +13,8 @@ Estabilização geométrica e melhoria automática de fotos e vídeos de eclipse
 - **Anti-trepidação temporal** — suavização do centroide (EMA) e reutilização do último deslocamento válido quando um frame não tem deteção.
 - **Detecção de múltiplos discos** — além do disco principal, são detetados os **reflexos** (Hough + contornos); o polimento elimina os reflexos e o vídeo ao vivo mostra-os a vermelho.
 - **Polimento e avaliação automática** — `polish_image()` dá brilho ao disco mantendo a coroa; `score_image()` atribui **estrelas (0–5)** ao resultado (ruído, contraste, tamanho e cor da coroa).
-- **Aprendizagem por feedback** — cada execução fica em SQLite; par além da avaliação automática, pode avaliar manualmente (0–5 estrelas) e o AstroFrame **ajusta os sliders automaticamente** na próxima execução com o mesmo perfil de câmara, mostrando o histórico/log no próprio interface.
+- **Calibração com exemplos** — interface dedicada (`python calibrate.py`) que carrega as fotos e vídeos de `samples/`, permite **ajustar à mão os círculos** (adicionar, remover, mover) e valida a deteção automática contra o ground truth em todas as amostras (recall, precisão, IoU, erros + sugestões de parâmetros).
+- **Aprendizagem por feedback** — cada execução fica em SQLite; para além da avaliação automática, pode avaliar manualmente (0–5 estrelas) e o AstroFrame **ajusta os sliders automaticamente** na próxima execução com o mesmo perfil de câmara, mostrando o histórico/log no próprio interface.
 - **Interface Gradio** — dois separadores: **Imagem** (Antes/Depois, sliders, zoom na coroa/borda) e **Vídeo** (processamento ao vivo com os discos detetados, preview final em frames espaçados e exportação opcional). Ao carregar um vídeo, os **metadados** são lidos (ffprobe/OpenCV/EXIF) e os **parâmetros são sugeridos automaticamente** (ISO → denoising, resolução → raios do detector, bitrate → compressão), mantendo-se editáveis.
 - **CLI** — lote de fotos, vídeos (estabilizar/melhorar/stack), logs e barra de progresso.
 
@@ -41,6 +42,7 @@ Alternativa simples: `pip install -r requirements.txt`. Requer Python 3.10+.
 
 ```bash
 python main.py                             # interface web (Gradio) — frontend + backend juntos
+python calibrate.py                        # interface de calibração (samples/)
 astroframe serve                          # equivalente via CLI instalada
 astroframe process --input foto1.jpg foto2.jpg --output-dir outputs/
 astroframe video --input eclipse.mp4 --mode enhance
@@ -54,11 +56,19 @@ frontend no navegador e processa as imagens no backend (o motor em `core/` corre
 no mesmo processo, a cada clique em **Processar**). Opções: `--config`,
 `--host`, `--port`, `--share` e `--no-browser`.
 
+`calibrate.py` é a **interface de calibração**: carrega imagens e frames de
+vídeo de `samples/`, ajusta os círculos à mão (arrastar = mover, pincel =
+adicionar, borracha = remover) e **Validar todas** compara a deteção
+automática com o ground truth em todas as amostras.
+
 ## Documentação
 
-- [docs/USO.md](docs/USO.md) — guia prático: CLI, configuração YAML campo a campo, interface e workflow de vídeo.
-- [docs/API.md](docs/API.md) — referência dos módulos `core/`, `video/`, `meta/`, `ai/` e `config.py`.
-- [docs/Arquitetura.md](docs/Arquitetura.md) — especificação original da solução (referência).
+- [docs/PT/USO.md](docs/PT/USO.md) — guia prático: CLI, configuração YAML campo a campo, interface, calibração e workflow de vídeo (PT).
+- [docs/PT/API.md](docs/PT/API.md) — referência dos módulos `core/`, `video/`, `meta/`, `ai/`, `calibration/` e `config.py` (PT).
+- [docs/PT/Arquitetura.md](docs/PT/Arquitetura.md) — especificação original da solução (referência, PT).
+- [docs/EN/](docs/EN/) — mesma documentação em inglês (API, Architecture, Usage, CHANGELOG).
+- [docs/FR/](docs/FR/) — même documentation en français (API, Architecture, Usage, CHANGELOG).
+- [README-EN.md](README-EN.md) / [README-FR.md](README-FR.md) — este README em inglês e francês.
 
 ## Limitações conhecidas
 
@@ -70,7 +80,7 @@ no mesmo processo, a cada clique em **Processar**). Opções: `--config`,
 ## Desenvolvimento
 
 ```bash
-pytest                      # 205 testes (pixel-tests com imagens sintéticas)
+pytest                      # ~260 testes (pixel-tests com imagens sintéticas)
 pytest --cov=astroframe     # cobertura (100% do pacote)
 ruff check .                # lint
 ruff format .               # formatação
@@ -82,11 +92,12 @@ CI (GitHub Actions): pytest em Python 3.10/3.12 + ruff, em `.github/workflows/ci
 
 ```
 src/astroframe/
-├── core/    estabilizador geométrico, melhoria automática e pipeline
-├── video/   leitura de frames, lucky imaging e stacking
-├── meta/    leitura de metadados (ffprobe/OpenCV/EXIF) e sugestões de parâmetros
-├── ui/      interface Gradio (Imagem/Vídeo) e CLI
-└── ai/      interpolação RIFE opcional (requer PyTorch)
+├── core/         estabilizador geométrico, melhoria automática e pipeline
+├── video/        leitura de frames, lucky imaging e stacking
+├── meta/         leitura de metadados (ffprobe/OpenCV/EXIF) e sugestões de parâmetros
+├── calibration/  varrimento de exemplos, ground truth e validação da deteção
+├── ui/           interface Gradio (Imagem/Vídeo + Calibração) e CLI
+└── ai/           interpolação RIFE opcional (requer PyTorch)
 ```
 
 ## Licença

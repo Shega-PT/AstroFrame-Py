@@ -153,6 +153,15 @@ def build_parser() -> argparse.ArgumentParser:
     template = sub.add_parser("config-template", help="Gera um config.yaml com os valores por omissão")
     template.add_argument("--output", default="config.yaml")
 
+    calibrate = sub.add_parser(
+        "calibrate", help="Abre a interface de calibração (círculos manuais + validação)"
+    )
+    calibrate.add_argument("--samples", default="samples", help="Pasta com imagens/vídeos de exemplo")
+    calibrate.add_argument("--config", default=None, help="Caminho para um config.yaml")
+    calibrate.add_argument("--host", default="127.0.0.1")
+    calibrate.add_argument("--port", type=int, default=7860)
+    calibrate.add_argument("--share", action="store_true", help="Gera um link público (Gradio share)")
+
     return parser
 
 
@@ -178,6 +187,16 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "config-template":
             _load_config(None).to_yaml(args.output)
             print(f"Config escrito em {args.output}")
+        elif args.command == "calibrate":
+            from astroframe.ui.calibration_app import run as run_calibration
+
+            run_calibration(
+                samples_dir=args.samples,
+                config_path=args.config,
+                host=args.host,
+                port=args.port,
+                share=args.share,
+            )
     except Exception:
         logger.exception("Falha na execução")
         return 1

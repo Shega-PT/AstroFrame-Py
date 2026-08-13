@@ -205,6 +205,96 @@ summary_fields(meta: MediaMetadata) -> dict[str, str]
 - `summary_fields` devolve o dicionário exibido no painel "Proporção /
   qualidade / sugestões" da interface.
 
+## `astroframe.calibration`
+
+Calibração da deteção contra exemplos (fotos/vídeos), com ground truth manual.
+
+### `calibration.scan`
+
+```python
+@dataclass(frozen=True)
+class SampleRef:
+    kind: str            # "image" | "video"
+    path: Path           # caminho absoluto do ficheiro
+    frame: int | None    # índice de frame (None para imagens)
+    key: str             # "path_relativo#frame" (chave estável no store)
+    label: str           # "IMG path" / "VID path #frame" (interface)
+
+scan_samples(root, frames_per_video=8) -> list[SampleRef]
+sample_video_frames(frame_count, n=8) -> list[int]
+load_frame(sample) -> np.ndarray          # BGR (imagem ou frame amostrado)
+item_key(relpath, frame=None) -> str
+item_label(kind, relpath, frame=None) -> str
+```
+
+- Varrimento **recursivo** da pasta; imagens (jpg/jpeg/png/bmp/tif/tiff/webp)
+  entram tal como estão e vídeos (mp4/avi/mov/mkv/m4v) contribuem com N frames
+  **equidistantes e determinísticos** (meios-intervalos — reproduzível na
+  validação). Vídeos ilegíveis são ignorados com aviso.
+- `load_frame` lê a imagem via `cv2.imread` ou o frame do vídeo via
+  `FrameReader.frame_at(index)` (novo — procura `CAP_PROP_POS_FRAMES`; erros
+  levantam `ValueError`).
+
+### `calibration.store`
+
+```python
+@dataclass
+class CalibrationItem:
+    path: str            # caminho relativo à pasta de amostras
+    kind: str
+    frame: int | None
+    width: int
+    height: int
+    circles: list[DiskDetection] = []   # ground truth manual
+
+class CalibrationStore(path):           # JSON v1 (samples/calibration.json)
+    .load() -> None                     # idempotente; ilegível/versão -> vazio
+    .save() -> None
+    .upsert_item(key, item) -> None     # grava logo
+    .get_item(key) -> CalibrationItem | None
+```
+
+### `calibration.circles`
+
+```python
+circles_to_layers(image_rgb, circles) -> {"background": ..., "layers": [...]}
+layers_to_circles(layers) -> list[DiskDetection]
+```
+
+- `circles_to_layers` constrói o valor do `gr.ImageEditor`: o fundo + **uma
+  camada RGBA por círculo** (disco translúcido + bordo opaco). As camadas são
+  **arrastáveis** na interface → mover um círculo = arrastar a camada;
+  pintar por cima adiciona; a borracha remove.
+- `layers_to_circles` converte o que o utilizador desenhou em círculos — um
+  por **componente conexa** de cada camada (duas pinturas separadas na mesma
+  camada = dois círculos); aceita camadas com alpha ou RGB.
+
+### `calibration.validate`
+
+```python
+circle_iou(a, b) -> float                                  # interseção/união 0–1
+match_circles(manual, detected, iou_threshold=0.5)
+    -> (pairs: list[(i, j)], unmatched_manual: set, unmatched_detected: set)
+
+@dataclass
+class ItemReport:        # por amostra
+    label, n_manual, n_detected, n_matched,
+    n_false_negatives, n_false_positives,
+    mean_iou, mean_center_error, mean_radius_error_pct   # None sem pares
+
+@dataclass
+class CalibrationReport: # agregado
+    items, total_* , recall, precision,
+    mean_iou, mean_center_error, mean_radius_error_pct,
+    score: float | None  # 0–100 = 0.4·recall + 0.3·precisão + 0.3·IoU
+
+validate_item(label, manual, detected) -> ItemReport      # erro de raio com sinal (%)
+validate_all([(label, manual, detected), ...]) -> CalibrationReport
+suggest_parameters(report, config=None) -> list[str]      # sugestões PT
+```
+
+- Correspondência **greedy por IoU decrescente** (limiar 0.5): manual↔deteção.
+
 ## `astroframe.ui`
 
 ### `ui.gradio_app`
@@ -248,6 +338,29 @@ def manual_feedback(state, stars, db=None, config=None) -> tuple[str, str]
 - `run()` aceita `inbrowser` para abrir o navegador automaticamente; o ponto de
   entrada único equivalente é `python main.py` na raiz do repositório.
 
+### `ui.calibration_app`
+
+```python
+build_calibration_app(samples_dir="samples", config=None, store=None) -> gr.Blocks
+run(samples_dir="samples", config_path=None, host="127.0.0.1", port=7860, share=False, inbrowser=True) -> None
+
+def load_item_payload(key, samples_dir, config=None, store=None) -> (dict, str)
+def auto_detect_payload(key, samples_dir, config=None) -> (dict, str)
+def save_item_circles(editor_value, key, samples_dir, store=None) -> str
+def validate_all_report(samples_dir, config=None, store=None) -> (rows, summary_html, suggestions_html)
+```
+
+- Layout: dropdown de amostras + `gr.ImageEditor` (camadas RGBA por círculo,
+  pincel/borracha) + botões "Deteção automática" / "Guardar ajustes" / 
+  "Validar todas as amostras" → tabela por amostra, resumo global (score
+  0–100, recall, precisão, IoU, erros) e sugestões de parâmetros.
+- `load_item_payload` dá prioridade ao ground truth guardado; sem ele usa a
+  deteção automática como ponto de partida. `save_item_circles` converte as
+  camadas do editor em círculos e grava no store. `validate_all_report`
+  percorre **todas** as amostras (imagens + frames amostrados dos vídeos).
+- Ponto de entrada equivalente: `python calibrate.py` na raiz do repositório
+  ou `astroframe calibrate` (CLI).
+
 ### `ui.cli`
 
 ```python
@@ -258,7 +371,7 @@ process_video(path, output, config, mode, stack_n, fast) -> str  # caminho de sa
 ```
 
 - Subcomandos: `serve`, `process`, `video` (`--mode stabilize|enhance|stack`,
-  `--fast`), `config-template`.
+  `--fast`), `config-template`, `calibrate` (interface de calibração).
 - `process_images` continua após falhas individuais e levanta `RuntimeError`
   se nada for processado. `mode="stack"` centraliza os frames antes de
   empilhar. Exportação de vídeo não copia áudio (limitado pelo OpenCV).

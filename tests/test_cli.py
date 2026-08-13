@@ -121,7 +121,7 @@ def test_build_parser_tem_subcomandos():
     for action in parser._actions:
         if isinstance(action.choices, dict):
             names |= set(action.choices)
-    assert {"serve", "process", "video", "config-template"} <= names
+    assert {"serve", "process", "video", "config-template", "calibrate"} <= names
 
 
 def test_main_config_template(tmp_path):
@@ -157,6 +157,17 @@ def test_main_serve_lanca_gradio(monkeypatch):
     )
     assert main(["serve", "--port", "7895"]) == 0
     assert launched["port"] == 7895
+
+
+def test_main_calibrate_lanca_calibration_app(monkeypatch):
+    launched = {}
+    monkeypatch.setattr(
+        "astroframe.ui.calibration_app.run",
+        lambda **kwargs: launched.update(kwargs),
+    )
+    assert main(["calibrate", "--samples", "samples", "--port", "7896"]) == 0
+    assert launched["samples_dir"] == "samples"
+    assert launched["port"] == 7896
 
 
 def test_main_config_de_ficheiro(tmp_path):

@@ -8,10 +8,11 @@ em [API.md](API.md).
 
 1. [Instalação](#instalação)
 2. [Interface web (Gradio)](#interface-web-gradio)
-3. [Linha de comando](#linha-de-comando)
-4. [Configuração (config.yaml)](#configuração-configyaml)
-5. [Workflow de vídeo](#workflow-de-vídeo)
-6. [Limitações e notas](#limitações-e-notas)
+3. [Calibração](#calibração)
+4. [Linha de comando](#linha-de-comando)
+5. [Configuração (config.yaml)](#configuração-configyaml)
+6. [Workflow de vídeo](#workflow-de-vídeo)
+7. [Limitações e notas](#limitações-e-notas)
 
 ---
 
@@ -108,6 +109,59 @@ SQLite em `~/.astroframe/feedback.db`. Pode mudar o local com a variável de
 ambiente `ASTROFRAME_FEEDBACK_DB` (por exemplo, para partilhar a aprendizagem
 entre várias máquinas).
 
+## Calibração
+
+O AstroFrame inclui uma **interface dedicada à calibração**: carrega as fotos e
+vídeos da pasta [samples/](../../samples/README.md), mostra a deteção com
+círculos (bounding box circulares) que podem ser **adicionados, removidos e
+movidos manualmente**, e valida a deteção automática contra o ground truth em
+**todas** as amostras.
+
+```bash
+python calibrate.py                          # interface em http://127.0.0.1:7860
+python calibrate.py --samples samples --port 7861
+astroframe calibrate --samples samples       # equivalente (CLI instalada)
+```
+
+### O que entra na calibração
+
+- **Imagens** (jpg/png/bmp/tif/webp) — cada uma é um item.
+- **Vídeos** (mp4/avi/mov/mkv/m4v) — cada um contribui com 8 frames amostrados
+  de forma equidistante e determinística (reproduzível na validação).
+- A pasta é varrida recursivamente: organiza por assunto como quiseres
+  (eclipse, lua, sol, planetas — subpastas em `samples/images/` e
+  `samples/videos/`).
+
+### Fluxo de trabalho
+
+1. **Escolher a amostra** — o dropdown lista todos os itens
+   (`IMG …` para imagens, `VID … #frame` para frames de vídeo).
+2. **Ajustar os círculos** — cada círculo é uma camada sobre a imagem:
+   - **arrastar** a camada → move o círculo;
+   - **pincel** por cima do astro → adiciona (a pintura é convertida em
+     círculo no centro do que pintaste);
+   - **borracha** → remove.
+   - O círculo pré-preenchido é o ground truth guardado; sem ground truth, a
+     **deteção automática** entra como ponto de partida.
+3. **Guardar ajustes** — grava o ground truth do item em
+   `samples/calibration.json` (ficheiro local, ignorado pelo git).
+4. **Deteção automática** — repõe os círculos detetados por
+   `find_all_disks` no item atual (substitui o que está no editor).
+5. **Validar todas as amostras** — corre a deteção automática em tudo e
+   compara com o ground truth manual: por amostra e global devolve
+   recall, precisão, IoU médio, erro do centro (px) e do raio (%), falsos
+   negativos/positivos, um **score de calibração (0–100)** e **sugestões de
+   parâmetros** (ex.: baixar `min_radius` se discos pequenos falham,
+   subir `param2` se houver deteções falsas).
+
+### Para que serve a calibração
+
+Os círculos manuais são o "resposta certa" que o sistema compara com a
+deteção automática. Com uma pasta variada (eclipses, Lua, Sol, planetas —
+discos grandes e pequenos, alto e baixo contraste), a validação mostra onde a
+deteção falha e o que ajustar no `config.yaml` antes de processar o material
+real.
+
 ## Linha de comando
 
 Os subcomandos completos (`astroframe --help`):
@@ -118,6 +172,7 @@ Os subcomandos completos (`astroframe --help`):
 | `process` | Processa fotos em lote (`--input a.jpg b.jpg --output-dir pasta/`) |
 | `video` | Processa um vídeo (`--mode stabilize\|enhance\|stack`) |
 | `config-template` | Gera `config.yaml` com os valores por omissão |
+| `calibrate` | Abre a interface de calibração (`--samples pasta/`) |
 
 ### Fotografias em lote
 
