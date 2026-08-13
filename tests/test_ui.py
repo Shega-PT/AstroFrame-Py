@@ -16,6 +16,7 @@ from astroframe.ui.gradio_app import (
     _draw_disks,
     _from_pipeline,
     _preview_every,
+    _split_disks,
     _summary_html,
     _to_pipeline,
     _zoom_crop,
@@ -120,6 +121,40 @@ def test_draw_disks_ignora_discos_fora_dos_limites():
     frame = np.zeros((50, 60, 3), dtype=np.uint8)
     marked = _draw_disks(frame, DiskDetection(30, 25, 8), [DiskDetection(-5, 10, 4)])
     assert not (marked[..., 2] > 200).any()
+
+
+def test_split_disks_separa_companheiro_de_reflexo():
+    primary = DiskDetection(30, 25, 10)
+    companion = DiskDetection(32, 27, 5)
+    ghost = DiskDetection(50, 45, 6)
+    companions, reflections = _split_disks([primary, companion, ghost], primary)
+    assert companions == [companion]
+    assert reflections == [ghost]
+    companions, reflections = _split_disks([companion, ghost], None)
+    assert companions == []
+    assert len(reflections) == 2
+
+
+def test_draw_disks_desenha_companheiro_a_amarelo():
+    frame = np.zeros((50, 60, 3), dtype=np.uint8)
+    marked = _draw_disks(
+        frame,
+        DiskDetection(30, 25, 10),
+        reflections=[DiskDetection(50, 45, 6)],
+        companions=[DiskDetection(32, 27, 5)],
+    )
+    assert (marked[..., 2] > 200).any()
+    assert (marked[..., 1] > 200).any()
+    red_only = (marked[..., 2] > 200) & (marked[..., 1] <= 200)
+    yellow = (marked[..., 1] > 200) & (marked[..., 2] > 200)
+    assert red_only.any() and yellow.any()
+
+
+def test_draw_disks_ignora_companheiro_fora_dos_limites():
+    frame = np.zeros((50, 60, 3), dtype=np.uint8)
+    marked = _draw_disks(frame, DiskDetection(30, 25, 10), companions=[DiskDetection(-5, 27, 5)])
+    yellow = (marked[..., 1] > 200) & (marked[..., 2] > 200)
+    assert not yellow.any()
 
 
 def test_preview_every():

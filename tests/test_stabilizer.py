@@ -171,6 +171,40 @@ def test_find_all_disks_reflexo_afastado_mantido(monkeypatch):
     assert len(disks) == 2
 
 
+def test_find_all_disks_limita_numero_de_discos(monkeypatch):
+    image, cx, cy = make_disk_image()
+
+    def fake_hough(gray, *args, **kwargs):
+        circles = [
+            [cx, cy, 90],
+            [80, 60, 80],
+            [80, 220, 70],
+            [80, 310, 60],
+            [450, 60, 50],
+            [450, 300, 40],
+        ]
+        return np.array([circles], dtype=np.float64)
+
+    monkeypatch.setattr("astroframe.core.stabilizer.cv2.HoughCircles", fake_hough)
+    config = AstroFrameConfig()
+    config.stabilizer.min_radius = 20
+    disks = find_all_disks(image, config)
+    assert len(disks) == 5
+
+
+def test_find_all_disks_anula_em_disco_coberto_sem_anel(monkeypatch):
+    image = np.zeros((200, 200, 3), dtype=np.uint8)
+
+    def fake_hough(gray, *args, **kwargs):
+        return np.array([[[100, 100, 212], [80, 80, 140]]], dtype=np.float64)
+
+    monkeypatch.setattr("astroframe.core.stabilizer.cv2.HoughCircles", fake_hough)
+    config = AstroFrameConfig()
+    config.stabilizer.min_radius = 20
+    disks = find_all_disks(image, config)
+    assert len(disks) == 2
+
+
 def test_antijitter_last_detection_mantido_em_frame_sem_deteccao(monkeypatch):
     image1, cx, cy = make_disk_image()
     blank = np.zeros_like(image1)

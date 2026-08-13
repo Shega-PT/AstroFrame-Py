@@ -1,4 +1,4 @@
-"""Testes do polimento final (fundo preto, contorno redondo, reflexos)."""
+"""Testes do polimento por astros (realce individual + remontagem sem costuras)."""
 
 from __future__ import annotations
 
@@ -6,8 +6,8 @@ import cv2
 import numpy as np
 
 from astroframe.config import AstroFrameConfig
-from astroframe.core.polish import _feather_mask, polish_image
-from astroframe.core.stabilizer import DiskDetection
+from astroframe.core.polish import _band_mask, _feather_mask, polish_image
+from astroframe.core.stabilizer import DiskDetection, find_all_disks
 
 
 def _disk_image(height: int = 300, width: int = 360, radius: int = 80) -> np.ndarray:
@@ -16,14 +16,46 @@ def _disk_image(height: int = 300, width: int = 360, radius: int = 80) -> np.nda
     return image
 
 
-def test_polish_fundo_fora_da_coroa_fica_preto():
+def _eclipse_image(height: int = 300, width: int = 400) -> np.ndarray:
+    """Sol brilhante com a Lua escura a entrar (eclipse solar)."""
+    image = np.zeros((height, width, 3), dtype=np.uint8)
+    cv2.circle(image, (200, 150), 90, (235, 235, 235), -1)
+    cv2.circle(image, (185, 128), 45, (12, 12, 12), -1)
+    return image
+
+
+def test_polish_fundo_fora_da_linha_de_recorte_e_media_do_fundo_original():
     image = np.full((300, 360, 3), 90, dtype=np.uint8)
     cfg = AstroFrameConfig()
     cfg.polish.corona_scale = 1.0
-    detection = DiskDetection(180, 150, 60)
-    out = polish_image(image, detection, cfg)
+    out = polish_image(image, DiskDetection(180, 150, 60), cfg)
+    assert out[5, 5].tolist() == [90, 90, 90]
+    assert out[180, 150].tolist() == [90, 90, 90]
+
+
+def test_polish_black_background_opcional_preto_puro():
+    image = np.full((300, 360, 3), 90, dtype=np.uint8)
+    cfg = AstroFrameConfig()
+    cfg.polish.black_background = True
+    cfg.polish.corona_scale = 1.0
+    out = polish_image(image, DiskDetection(180, 150, 60), cfg)
     assert out[5, 5].tolist() == [0, 0, 0]
     assert out[180, 150].tolist() == [90, 90, 90]
+
+
+def test_polish_anel_entre_astro_e_recorte_fica_diluido():
+    image = np.full((300, 360, 3), 30, dtype=np.uint8)
+    cv2.circle(image, (180, 150), 60, (200,) * 3, -1)
+    cfg = AstroFrameConfig()
+    cfg.polish.corona_scale = 2.0
+    cfg.polish.brightness = 0.0
+    out = polish_image(image, DiskDetection(180, 150, 60), cfg)
+    inside = out[150, 180]
+    mid = out[150, 270]
+    outside = out[150, 320]
+    assert outside.tolist() == [30, 30, 30]
+    assert 30 < int(mid[0]) < int(inside[0])
+    assert int(inside[0]) >= 200
 
 
 def test_polish_disco_permanece_intacto_dentro_do_raio():
@@ -31,6 +63,7 @@ def test_polish_disco_permanece_intacto_dentro_do_raio():
     cfg = AstroFrameConfig()
     cfg.polish.corona_scale = 1.0
     cfg.polish.remove_reflections = False
+    cfg.polish.brightness = 0.0
     out = polish_image(image, DiskDetection(180, 150, 80), cfg)
     assert out[150, 180].tolist() == [200, 200, 200]
 
@@ -41,6 +74,7 @@ def test_polish_contorno_suave_sem_dentes():
     cfg.polish.corona_scale = 1.0
     cfg.polish.feather = 0.03
     cfg.polish.remove_reflections = False
+    cfg.polish.brightness = 0.0
     out = polish_image(image, DiskDetection(180, 150, 80), cfg)
     edge = out[150, 180 + 80]
     assert 0 < int(edge[0]) < 200
@@ -82,35 +116,111 @@ def test_polish_reflexos_removidos_da_coroa(monkeypatch):
     cfg = AstroFrameConfig()
     cfg.polish.corona_scale = 1.6
     cfg.polish.reflection_min_radius = 5
+    cfg.polish.brightness = 0.0
+    monkeypatch.setattr(
+        "astroframe.core.polish.find_all_disks",
+        lambda img, config=None: [main, ghost],
+    )
+    out = polish_image(image, main, cfg)
+    assert out[60, 70].tolist() == [60, 60, 60]
+    assert out[150, 180].tolist() == [60, 60, 60]
+
+
+def test_polish_reflexos_removidos_com_black_background(monkeypatch):
+    image = np.full((300, 360, 3), 60, dtype=np.uint8)
+    ghost = DiskDetection(70, 60, 25)
+    main = DiskDetection(180, 150, 80)
+    cfg = AstroFrameConfig()
+    cfg.polish.corona_scale = 1.6
+    cfg.polish.reflection_min_radius = 5
+    cfg.polish.black_background = True
+    cfg.polish.brightness = 0.0
     monkeypatch.setattr(
         "astroframe.core.polish.find_all_disks",
         lambda img, config=None: [main, ghost],
     )
     out = polish_image(image, main, cfg)
     assert out[60, 70].tolist() == [0, 0, 0]
-    assert out[150, 180].tolist() == [60, 60, 60]
 
 
-def test_polish_sem_black_background_mantem_fundo(monkeypatch):
+def test_polish_reflexo_mantido_quando_remocao_desativada(monkeypatch):
     image = np.full((300, 360, 3), 60, dtype=np.uint8)
+    ghost = DiskDetection(70, 60, 25)
+    main = DiskDetection(180, 150, 80)
     cfg = AstroFrameConfig()
-    cfg.polish.black_background = False
+    cfg.polish.corona_scale = 1.6
     cfg.polish.remove_reflections = False
-    out = polish_image(image, DiskDetection(180, 150, 80), cfg)
-    assert out[5, 5].tolist() == [60, 60, 60]
+    cfg.polish.brightness = 0.0
+    monkeypatch.setattr(
+        "astroframe.core.polish.find_all_disks",
+        lambda img, config=None: [main, ghost],
+    )
+    out = polish_image(image, main, cfg)
+    assert out[60, 70].tolist() == [60, 60, 60]
 
 
-def test_polish_reflexoes_primeiro_circulo_nao_se_remove(monkeypatch):
+def test_polish_astro_fora_da_imagem_ignorado_sem_falhar(monkeypatch):
     image = np.full((300, 360, 3), 60, dtype=np.uint8)
     main = DiskDetection(180, 150, 80)
     cfg = AstroFrameConfig()
-    cfg.polish.corona_scale = 1.0
+    cfg.polish.remove_reflections = False
+    cfg.polish.brightness = 0.0
     monkeypatch.setattr(
         "astroframe.core.polish.find_all_disks",
-        lambda img, config=None: [main, DiskDetection(180, 150, 40)],
+        lambda img, config=None: [main, DiskDetection(-100, 50, 30), DiskDetection(900, 500, 40)],
     )
     out = polish_image(image, main, cfg)
+    assert out.shape == image.shape
     assert out[150, 180].tolist() == [60, 60, 60]
+
+
+def test_polish_fundo_sem_pixels_fora_do_recorte_nao_falha():
+    image = np.full((100, 100, 3), 90, dtype=np.uint8)
+    cfg = AstroFrameConfig()
+    cfg.polish.corona_scale = 1.0
+    cfg.polish.brightness = 0.0
+    out = polish_image(image, DiskDetection(50, 50, 80), cfg)
+    assert out.shape == image.shape
+
+
+def test_polish_sem_background_fill_nem_black_devolve_inalterado():
+    image = _disk_image()
+    cfg = AstroFrameConfig()
+    cfg.polish.background_fill = False
+    cfg.polish.black_background = False
+    out = polish_image(image, DiskDetection(180, 150, 80), cfg)
+    np.testing.assert_array_equal(out, image)
+
+
+def test_eclipse_sol_e_lua_tratados_individualmente_sem_cortes():
+    image = _eclipse_image()
+    cfg = AstroFrameConfig()
+    cfg.stabilizer.min_dist = 60
+    cfg.polish.brightness = 0.0
+    out = polish_image(image, DiskDetection(200, 150, 90), cfg)
+    assert out[128, 185].tolist() == [12, 12, 12]
+    assert 200 <= int(out[150, 260][0]) <= 255
+    assert out[150, 360].tolist() == [0, 0, 0]
+
+
+def test_eclipse_silhueta_escura_nao_recebe_brilho():
+    image = _eclipse_image()
+    cfg = AstroFrameConfig()
+    cfg.stabilizer.min_dist = 60
+    cfg.polish.brightness = 0.5
+    out = polish_image(image, DiskDetection(200, 150, 90), cfg)
+    assert out[128, 185].tolist() == [12, 12, 12]
+    assert out[150, 260].tolist() == [255, 255, 255]
+
+
+def test_eclipse_deteccao_devolve_sol_e_lua():
+    image = _eclipse_image()
+    cfg = AstroFrameConfig()
+    cfg.stabilizer.min_dist = 60
+    disks = find_all_disks(image, cfg)
+    assert len(disks) >= 2
+    assert abs(disks[0].cx - 200) <= 6
+    assert any(d.radius <= 0.6 * disks[0].radius for d in disks)
 
 
 def test_polish_imagem_escala_cinza():
@@ -119,40 +229,11 @@ def test_polish_imagem_escala_cinza():
     cfg = AstroFrameConfig()
     cfg.polish.corona_scale = 1.0
     cfg.polish.remove_reflections = False
+    cfg.polish.brightness = 0.0
     out = polish_image(gray, DiskDetection(180, 150, 80), cfg)
     assert out.shape == gray.shape
     assert out[150, 180] == 200
     assert out[5, 5] == 0
-
-
-def test_polish_circulo_interior_concentrico_nao_apaga_centro(monkeypatch):
-    image = np.full((300, 360, 3), 60, dtype=np.uint8)
-    main = DiskDetection(180, 150, 80)
-    inner = DiskDetection(183, 152, 40)
-    cfg = AstroFrameConfig()
-    cfg.polish.corona_scale = 1.0
-    monkeypatch.setattr(
-        "astroframe.core.polish.find_all_disks",
-        lambda img, config=None: [main, inner],
-    )
-    out = polish_image(image, main, cfg)
-    assert out[150, 180].tolist() == [60, 60, 60]
-    assert out[130, 180].tolist() == [60, 60, 60]
-
-
-def test_polish_reflexo_fora_do_disco_ainda_removido(monkeypatch):
-    image = np.full((300, 360, 3), 60, dtype=np.uint8)
-    main = DiskDetection(180, 150, 80)
-    ghost = DiskDetection(300, 60, 30)
-    cfg = AstroFrameConfig()
-    cfg.polish.corona_scale = 1.0
-    monkeypatch.setattr(
-        "astroframe.core.polish.find_all_disks",
-        lambda img, config=None: [main, ghost],
-    )
-    out = polish_image(image, main, cfg)
-    assert out[60, 300].tolist() == [0, 0, 0]
-    assert out[150, 180].tolist() == [60, 60, 60]
 
 
 def test_polish_ignora_reflexos_inferiores_ao_minimo(monkeypatch):
@@ -174,3 +255,11 @@ def test_feather_mask_sem_feather_redonda():
     assert mask[50, 50] == 1.0
     assert mask[50, 75] == 0.0
     assert mask[50, 76] == 0.0
+
+
+def test_band_mask_um_dentro_e_desce_ate_ao_recorte():
+    band = _band_mask((100, 100), 50, 50, 20.0, 40.0, 0.0)
+    assert band[50, 50] == 1.0
+    assert band[50, 70] == 1.0
+    assert 0.0 < band[50, 72] < 1.0
+    assert band[50, 90] == 0.0

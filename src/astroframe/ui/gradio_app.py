@@ -20,6 +20,7 @@ estrelas), o que se ajustou para a próxima vez e porquê.
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import replace
 from pathlib import Path
 
@@ -82,19 +83,46 @@ def _draw_detection(frame: np.ndarray, detection: DiskDetection | None) -> np.nd
     return _draw_disks(frame, detection)
 
 
+def _split_disks(
+    disks: list[DiskDetection], primary: DiskDetection | None
+) -> tuple[list[DiskDetection], list[DiskDetection]]:
+    """Separa os discos em companheiros de eclipse e reflexos da lente.
+
+    Um companheiro (ex.: a Lua a entrar no Sol) tem o centro **dentro** do
+    astro maior; um reflexo (ghost da lente) está afastado dele.
+    """
+    companions: list[DiskDetection] = []
+    reflections: list[DiskDetection] = []
+    if primary is None:
+        return companions, list(disks)
+    for disk in disks:
+        if disk is primary or (disk.cx == primary.cx and disk.cy == primary.cy):
+            continue
+        inside = math.hypot(disk.cx - primary.cx, disk.cy - primary.cy) < primary.radius
+        target = companions if inside else reflections
+        target.append(disk)
+    return companions, reflections
+
+
 def _draw_disks(
     frame: np.ndarray,
     primary: DiskDetection | None,
     reflections: list[DiskDetection] | tuple[DiskDetection, ...] | None = None,
+    companions: list[DiskDetection] | tuple[DiskDetection, ...] | None = None,
 ) -> np.ndarray:
-    """Cópia do frame com TODOS os discos: principal a verde, reflexos a vermelho.
+    """Cópia do frame com TODOS os discos: astro maior a verde, companheiros
+    de eclipse a amarelo e reflexos a vermelho.
 
-    `primary`/`reflections` usam as coordenadas da própria `frame`.
+    `primary`/`reflections`/`companions` usam as coordenadas da própria `frame`.
     """
     height, width = frame.shape[:2]
     marked = frame.copy()
     if primary is not None and 0 <= primary.cx < width and 0 <= primary.cy < height:
         cv2.circle(marked, (primary.cx, primary.cy), _radius_clamped(frame, primary.radius), (0, 255, 0), 2)
+    for disk in companions or ():
+        if not (0 <= disk.cx < width and 0 <= disk.cy < height):
+            continue
+        cv2.circle(marked, (disk.cx, disk.cy), _radius_clamped(frame, disk.radius), (0, 255, 255), 2)
     for disk in reflections or ():
         if not (0 <= disk.cx < width and 0 <= disk.cy < height):
             continue
@@ -259,8 +287,8 @@ def process_video(
                 stabilized, detection = engine.stabilize(frame)
                 disks = engine.last_all_disks
                 primary = detection if detection is not None else engine.last_detection
-                reflections = [d for d in disks if d != primary] if primary is not None else disks
-                live = _draw_disks(frame, primary, reflections) if show_disk else frame.copy()
+                companions, reflections = _split_disks(disks, primary)
+                live = _draw_disks(frame, primary, reflections, companions) if show_disk else frame.copy()
                 state = "sem disco detetado" if primary is None else "disco no centro"
                 status = f"Frame {done + 1}/{total or '?'} · {state}"
                 if writer is not None and stabilized.shape[:2] == (height, width):
@@ -379,12 +407,17 @@ def process_image_input(
     if show_disk and result.detection is not None:
         primary = DiskDetection(width // 2, height // 2, result.detection.radius)
         dx, dy = width // 2 - result.detection.cx, height // 2 - result.detection.cy
-        reflections = [
-            DiskDetection(disk.cx + dx, disk.cy + dy, disk.radius)
-            for disk in find_all_disks(bgr, cfg)
-            if abs(disk.cx - result.detection.cx) + abs(disk.cy - result.detection.cy) > 4
-        ]
-        stabilized = _draw_disks(stabilized, primary, reflections)
+        companions, reflections = _split_disks(find_all_disks(bgr, cfg), result.detection)
+
+        def translate(disks_: list[DiskDetection]) -> list[DiskDetection]:
+            return [DiskDetection(d.cx + dx, d.cy + dy, d.radius) for d in disks_]
+
+        stabilized = _draw_disks(
+            stabilized,
+            primary,
+            translate(reflections),
+            translate(companions),
+        )
 
     zoomed = _zoom_crop(result.enhanced, zoom)
     state = _run_state("image", profile, cfg, rating, source=f"{width}x{height}")

@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 _MIN_DETECTABLE_DIM = 32
 _HALF_RES_THRESHOLD = 1200
+_MAX_DISKS = 5
 _CROP_MARGIN = 6
 
 
@@ -78,17 +79,25 @@ def find_disk_center(image: np.ndarray, config: AstroFrameConfig | None = None) 
 
 
 def find_all_disks(image: np.ndarray, config: AstroFrameConfig | None = None) -> list[DiskDetection]:
-    """Todos os discos candidatos detetados, ordenados por plausibilidade.
+    """Todos os discos candidatos detetados, ordenados por raio decrescente.
 
-    O primeiro é o disco principal (Sol/Lua); os seguintes são normalmente
-    reflexos internos da lente (ghosts) — a UI desenha-os a vermelho e o
-    polimento pode removê-los como ruído. Ordenação: raio decrescente
-    (contornos) ou confiança Hough decrescente, sempre raio decrescente.
+    O primeiro é o astro maior (Sol); os seguintes podem ser:
+
+    - **companheiros de eclipse** — círculos interiores com raio próprio
+      (ex.: a Lua a entrar), detetados num segundo passe Hough com `minDist`
+      reduzido (a Lua não é concêntrica com o Sol, mas o centro cai dentro
+      do raio do Sol, que o `minDist` normal descartaria);
+    - **reflexos da lente (ghosts)** — círculos afastados, normalmente mais
+      pequenos (a UI desenha-os a vermelho e o polimento pode removê-los).
+
+    Dedup: são fundidos apenas círculos do **mesmo bordo** (centros próximos
+    E raios quase-iguais); círculos concêntricos de raios diferentes
+    (Sol + Lua) convivem na lista.
     """
     config = config or AstroFrameConfig()
     cfg = config.stabilizer
 
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    gray = image if image.ndim == 2 else cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     height, width = gray.shape[:2]
     if min(height, width) < _MIN_DETECTABLE_DIM:
         return []
@@ -101,23 +110,10 @@ def find_all_disks(image: np.ndarray, config: AstroFrameConfig | None = None) ->
     blurred = cv2.GaussianBlur(gray, (cfg.gaussian_kernel_size, cfg.gaussian_kernel_size), cfg.gaussian_sigma)
     min_radius, max_radius = _effective_radius_limits(*gray.shape[:2], cfg)
 
-    disks: list[DiskDetection] = []
-
-    circles = cv2.HoughCircles(
-        blurred,
-        cv2.HOUGH_GRADIENT,
-        dp=cfg.dp,
-        minDist=cfg.min_dist,
-        param1=cfg.param1,
-        param2=cfg.param2,
-        minRadius=min_radius,
-        maxRadius=max_radius,
-    )
-    if circles is not None:
-        circles = np.uint16(np.around(circles))
-        for x, y, r in sorted(circles[0], key=lambda c: int(c[2]), reverse=True):
-            cx, cy = _intensity_centroid(gray, int(x), int(y), int(r))
-            disks.append(DiskDetection(int(cx / scale), int(cy / scale), int(r / scale)))
+    candidates = _hough_pass(blurred, cfg, cfg.min_dist, min_radius, max_radius, scale)
+    detail_dist = max(3, cfg.min_dist // 4)
+    if detail_dist < cfg.min_dist:
+        candidates += _hough_pass(blurred, cfg, detail_dist, min_radius, max_radius, scale)
 
     if cfg.contour_fallback:
         _, thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
@@ -130,23 +126,94 @@ def find_all_disks(image: np.ndarray, config: AstroFrameConfig | None = None) ->
                 cy = int(moments["m01"] / moments["m00"] / scale)
                 (_, _), radius = cv2.minEnclosingCircle(largest)
                 found = DiskDetection(cx, cy, int(radius / scale))
-                if not any(abs(d.cx - found.cx) + abs(d.cy - found.cy) < 4 for d in disks):
-                    disks.append(found)
+                if not any(abs(d.cx - found.cx) + abs(d.cy - found.cy) < 4 for d in candidates):
+                    candidates.append(found)
 
-    disks.sort(key=lambda d: d.radius, reverse=True)
+    candidates.sort(key=lambda d: d.radius, reverse=True)
     unique: list[DiskDetection] = []
-    for disk in disks:
-        if any(_is_concentric_duplicate(disk, kept) for kept in unique):
+    for disk in candidates:
+        if any(_same_edge(disk, kept) for kept in unique):
+            continue
+        if len(unique) >= _MAX_DISKS:
+            break
+        if any(_is_occluded_artifact(blurred, disk, kept, scale) for kept in unique):
             continue
         unique.append(disk)
     return unique
 
 
-def _is_concentric_duplicate(candidate: DiskDetection, kept: DiskDetection) -> bool:
-    """Círculo interior quase-concêntrico com um disco já aceite (é o mesmo
-    bordo detetado duas vezes — ex.: silhueta da Lua dentro do Sol)."""
-    tolerance = max(2, int(0.12 * kept.radius))
-    return math.hypot(candidate.cx - kept.cx, candidate.cy - kept.cy) <= tolerance
+def _is_occluded_artifact(
+    gray: np.ndarray, candidate: DiskDetection, kept: DiskDetection, scale: float
+) -> bool:
+    """Candidato quase totalmente dentro de um disco já aceite (interior ao
+    astro maior) que **não é um astro real**: um companheiro de eclipse (a
+    Lua) é muito mais escuro que o anel à sua volta; um círculo deitado pelos
+    dois bordos (Sol+Lua na mesma deteção) tem contraste fraco e é descartado.
+
+    A comparação usa a sobreposição de **área** (e não só o centro — o
+    refinamento do centroide pode arrastar o centro de um objeto afastado
+    para perto do astro maior).
+    """
+    height, width = gray.shape[:2]
+    xs, ys = np.meshgrid(np.arange(width), np.arange(height))
+    r_c, r_k = candidate.radius / scale, kept.radius / scale
+    cx_c, cy_c = candidate.cx / scale, candidate.cy / scale
+    cx_k, cy_k = kept.cx / scale, kept.cy / scale
+    d = math.hypot(cx_c - cx_k, cy_c - cy_k)
+    if d >= kept.radius:
+        return False
+    in_candidate = np.hypot(xs - cx_c, ys - cy_c) <= r_c
+    if not in_candidate.any():
+        return False
+    inside_kept = np.hypot(xs - cx_k, ys - cy_k) <= r_k
+    if float(in_candidate[inside_kept].sum()) < 0.9 * float(in_candidate.sum()):
+        return False
+    ring = (~in_candidate) & (np.hypot(xs - cx_c, ys - cy_c) <= 1.25 * r_c)
+    inside_mean = float(gray[in_candidate].mean())
+    ring_mean = float(gray[ring].mean()) if ring.any() else 0.0
+    return ring_mean > 0 and inside_mean >= 0.75 * ring_mean
+
+
+def _hough_pass(
+    blurred: np.ndarray,
+    cfg,
+    min_dist: int,
+    min_radius: int,
+    max_radius: int,
+    scale: float,
+) -> list[DiskDetection]:
+    """Um passe Hough com `minDist` próprio (o passe de detalhe usa um
+    `minDist` reduzido para encontrar círculos interiores ao astro maior)."""
+    circles = cv2.HoughCircles(
+        blurred,
+        cv2.HOUGH_GRADIENT,
+        dp=cfg.dp,
+        minDist=min_dist,
+        param1=cfg.param1,
+        param2=cfg.param2,
+        minRadius=min_radius,
+        maxRadius=max_radius,
+    )
+    found: list[DiskDetection] = []
+    if circles is not None:
+        circles = np.uint16(np.around(circles))
+        for x, y, r in sorted(circles[0], key=lambda c: int(c[2]), reverse=True):
+            cx, cy = _intensity_centroid(blurred, int(x), int(y), int(r))
+            found.append(DiskDetection(int(cx / scale), int(cy / scale), int(r / scale)))
+    return found
+
+
+def _same_edge(candidate: DiskDetection, kept: DiskDetection) -> bool:
+    """O mesmo bordo detetado duas vezes (centros próximos E raios quase-iguais).
+
+    Círculos concêntricos com raios diferentes (ex.: Lua dentro do Sol) não
+    são fundidos — são astros distintos.
+    """
+    tolerance = max(2, int(0.12 * max(candidate.radius, kept.radius)))
+    return (
+        math.hypot(candidate.cx - kept.cx, candidate.cy - kept.cy) <= tolerance
+        and abs(candidate.radius - kept.radius) <= tolerance
+    )
 
 
 def _auto_crop(stabilized: np.ndarray, dx: int, dy: int, radius: int, cfg) -> tuple[np.ndarray, float]:

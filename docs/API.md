@@ -48,12 +48,14 @@ center_and_stabilize(image, config=None) -> tuple[np.ndarray, DiskDetection | No
 class AntiJitterStabilizer(config=None, alpha=None): ...
 ```
 
-- `find_all_disks` — HoughCircles + fallback por contornos, com fusão de
-  duplicados por centro/raio e filtro de disco interior idêntico ao principal
-  (duplicado do Hough); a lista é ordenada por luminosidade (o principal é o
-  primeiro). Cada disco tem um `kind` (`"princial"`/`"reflexo"`), a fração do
-  limiar Hough que o detetou (`hough_strength`) e a origem (`"hough"`/
-  `"contour"`/`"merged"`).
+- `find_all_disks` — **dois passes** de `HoughCircles` (o segundo com
+  `minDist` 1/4 do normal, para círculos interiores ao astro maior) +
+  fallback por contornos; até **5 discos**, ordenados por raio decrescente.
+  Dedup apenas de círculos do **mesmo bordo** (centros próximos E raios
+  quase-iguais, tolerância 12% do raio), e rejeição de **círculos-ghost**:
+  um candidato quase totalmente dentro de um disco já aceite (≥90% da área)
+  com contraste fraco face ao anel à sua volta é descartado (`_is_occluded_artifact`).
+  Aceita BGR ou escala de cinza.
 - `find_disk_center` — primeiro elemento de `find_all_disks`; HoughCircles +
   fallback por contornos + refinamento por centroide de intensidade. Em frames
   ≥1200 px a deteção corre em meia-resolução.
@@ -71,12 +73,18 @@ class AntiJitterStabilizer(config=None, alpha=None): ...
 polish_image(image, detection, config=None) -> np.ndarray
 ```
 
-- Dá brilho ao disco principal (`polish.brightness`, concentrado no centro com
-  `brightness_exponent`) enquanto desfoca o fundo até `corona_scale × raio`
-  (mantém a coroa nítida) e **remove os reflexos** detetados por
-  `find_all_disks` (apenas os que tiverem ≥ `reflection_min_radius` do raio do
-  principal, para não apagar estrelas próximas). Sem deteção devolve a imagem
-  inalterada.
+- Polimento **por astros**: deteta todos os discos (`find_all_disks`),
+  separa companheiros de eclipse (centro dentro do astro maior) de reflexos
+  da lente (centro fora), realça **cada astro individualmente** (`_astro_boost`:
+  esticamento local de contraste + `polish.brightness`; silhuetas escuras e
+  uniformes — como a Lua em eclipse — são preservadas intactas) e **remonta
+  sem costuras** por blend de máscaras com feather (`_band_mask` +
+  `_astro_region`): a linha de recorte `corona_scale × raio` dilui o anel até
+  ao fundo e as sobreposições entre astros são a média suave dos realces.
+  O fundo é a **média do fundo original** (`background_fill`) ou preto puro
+  (`black_background`); reflexos (raio ≥ `reflection_min_radius` px) são
+  preenchidos com o fundo se `remove_reflections`. Sem deteção devolve a
+  imagem inalterada.
 
 ### `core.enhancer`
 
@@ -216,8 +224,7 @@ def manual_feedback(state, stars, db=None, config=None) -> tuple[str, str]
 - Dois separadores: **Imagem** (entrada, estabilizado, processado, zoom,
   avaliação, sliders, avaliação manual + log de aprendizagem) e **Vídeo**
   (upload, painel de metadados, sliders pré-preenchidos, processamento ao vivo
-  com discos a verde/reflexos a vermelho, avaliação automática e manual,
-  exportação opcional).
+  com discos desenhados, avaliação automática e manual, exportação opcional).
 - `inspect_video_upload` chama `meta.extractor` + `meta.suggest` +
   `apply_learned` (avaliações anteriores do mesmo perfil de câmara) e devolve,
   respetivamente: HTML do resumo (proporção/qualidade/sugestões), os metadados
@@ -226,12 +233,14 @@ def manual_feedback(state, stars, db=None, config=None) -> tuple[str, str]
   Gradio); a cada frame devolve:
   `(live_rgb, preview_rgb, out_video_path_ou_None, status, progress, rating_html,
   run_state, log_html)` — `live` é o frame original em tempo real com os discos
-  detetados (`_draw_detection`: verde principal, vermelho reflexos), `preview` é
-  o resultado final mostrado apenas em frames espaçados (`_preview_every`), os
-  outros campos com `None`/fração no meio do passe. Sem disco detetado em
-  **nenhum** frame, o resultado final sai sem polimento e a avaliação é calculada
-  sem deteção (aviso no estado). Se `export=True`, escreve o vídeo completo com
-  polimento (.mp4, codec `mp4v`, sem áudio) e devolve o caminho no último frame.
+  detetados (`_draw_disks`: **verde** = astro maior, **amarelo** = companheiros
+  de eclipse, **vermelho** = reflexos — separados por `_split_disks`, que usa o
+  centro do disco vs. raio do astro maior), `preview` é o resultado final
+  mostrado apenas em frames espaçados (`_preview_every`), os outros campos com
+  `None`/fração no meio do passe. Sem disco detetado em **nenhum** frame, o
+  resultado final sai sem polimento e a avaliação é calculada sem deteção (aviso
+  no estado). Se `export=True`, escreve o vídeo completo com polimento (.mp4,
+  codec `mp4v`, sem áudio) e devolve o caminho no último frame.
 - `process_image_input` devolve `(estabilizado, processado, zoom, html da
   avaliação, estado, log de aprendizagem)`; o estado (perfil, avaliação, parâmetros)
   alimenta o `manual_feedback` que grava a avaliação em estrelas e reporta o ajuste
@@ -298,7 +307,7 @@ class ConfigNudge:
     polish: dict           # {'brightness': {...}}
     explanation: dict[str, str]  # texto por parâmetro (porquê do ajuste)
     judicial_override: bool      # True: a avaliação má impõe logo a correção
-    factor: float          # escala global da correção (feedback.nudge_alpha)
+    factor: float          # escala global da correção (feedback.learning_rate)
 
 @dataclass(frozen=True)
 class RunRecord:
@@ -321,10 +330,10 @@ class FeedbackDB(path=None):               # SQLite com locking retry (WAL)
 ```
 
 - Banco SQLite em `~/.astroframe/feedback.db` (ou `$ASTROFRAME_FEEDBACK_DB`);
-  criado ao primeiro uso, com retry em base bloqueada e `max_history` por perfil.
+  criado ao primeiro uso, com retry em base bloqueada e `history_limit` por perfil.
 - `apply_learned` devolve a config original se não houver histórico (ou a
   `judicial_override`/`factor` for nula); regras: avaliações boas e consistentes
-  suavizam o ajuste (`consistency_weight`), avaliações más aplicam denoise extra
+  suavizam o ajuste (`user_weight`), avaliações más aplicam denoise extra
   com ruído (métricas >`1.0`), coroa fraca aumenta o brilho do polimento, disco
   pequeno reduz os raios do detector; os valores são limitados aos intervalos
   válidos.

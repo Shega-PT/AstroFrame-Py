@@ -60,9 +60,12 @@ A interface tem dois separadores:
 ### Separador Imagem
 
 - **Entrada** — carregar a foto/frame (formato arbitrátrio de imagem).
-- **Estabilizado** — disco centralizado (com círculo verde do disco detetado).
-- **Processado** — CLAHE + denoising + nitidez + **polimento** (brilho no disco
-  principal, coroa preservada e reflexos removidos).
+- **Estabilizado** — disco centralizado, com os discos detetados desenhados:
+  **verde** = astro maior, **amarelo** = companheiros de eclipse (ex.: a Lua
+  a entrar no Sol), **vermelho** = reflexos da lente.
+- **Processado** — CLAHE + denoising + nitidez + **polimento por astros**
+  (cada astro realçado individualmente e remontado sem costuras; fundo = média
+  do fundo original; reflexos removidos).
 - **Zoom** — ampliação centrada na coroa/borda.
 - **Parâmetros** — CLAHE clip limit, força do denoising, nitidez, zoom e escala
   da coroa mantida no polimento, com valores iniciais vindos do `config.yaml`.
@@ -84,11 +87,12 @@ A interface tem dois separadores:
    sugestões de otimização **e com o que a IA já aprendeu** (avaliações
    anteriores do mesmo perfil), mas continuam editáveis.
 2. **Processar vídeo** — enquanto a pipeline corre:
-   - **Esquerda (ao vivo)** — o frame original em tempo real com os círculos
-     do disco detetado: **verde** = disco principal, **vermelho** = reflexos.
+   - **Esquerda (ao vivo)** — o frame original em tempo real com os discos
+     detetados: **verde** = astro maior, **amarelo** = companheiros de eclipse,
+     **vermelho** = reflexos da lente.
    - **Direita (resultado final)** — em frames bem espaçados, o resultado com
      todas as correções (estabilizado + CLAHE + denoising + nitidez +
-     polimento/remoção de reflexos).
+     polimento por astros).
    - Barra de estado com o frame atual e o progresso, e **avaliação automática**
      do resultado final.
 3. **Exportação opcional** — marcar *"Exportar vídeo processado (.mp4, sem
@@ -187,19 +191,23 @@ Todos os campos e tipos:
 ### `polish`
 | Campo | Tipo | Padrão | Descrição |
 |---|---|---|---|
-| `brightness` | float | `0.25` | Brilho adicionado ao disco principal (0 = desativado) |
-| `brightness_exponent` | float | `1.2` | Concentra o brilho no centro do disco (maior = mais localizado) |
-| `corona_scale` | float | `1.6` | Região da coroa que não é escurecida (× raio) |
-| `reflection_min_radius` | float | `0.25` | Fração mínima do raio do disco para um reflexo ser removido |
-| `smoothing_kernel_size` | int | `15` | Desfoque do fundo atrás do disco (ímpar) |
+| `enabled` | bool | `true` | Liga/desliga o polimento |
+| `corona_scale` | float | `1.6` | Linha de recorte (× raio do astro): entre o bordo e a linha a imagem é diluída até ao fundo |
+| `feather` | float | `0.02` | Suavização (fração do raio) do contorno e das sobreposições entre astros |
+| `background_fill` | bool | `true` | Fundo = média do fundo original (fora da linha de recorte) |
+| `black_background` | bool | `false` | `true` = fundo preto puro em vez da média |
+| `brightness` | float | `0.15` | Brilho extra adicionado aos astros (0 = só esticamento de contraste) |
+| `remove_reflections` | bool | `true` | Remove círculos-ghost (centro fora do astro maior) |
+| `reflection_min_radius` | int | `8` | Raio mínimo (px) de um reflexo a remover (mais pequeno = estrela/ruído) |
 
 ### `feedback` (aprendizagem)
 | Campo | Tipo | Padrão | Descrição |
 |---|---|---|---|
 | `enabled` | bool | `true` | Guarda avaliações e aplica o ajuste aprendido aos sliders |
-| `nudge_alpha` | float | `0.3` | Força da correção (0–1): 1 aplicaria logo a avaliação manual na totalidade |
-| `consistency_weight` | float | `0.5` | Maior = correções mais suaves quando as avaliações são boas |
-| `max_history` | int | `1000` | Execuções mantidas por perfil (as mais antigas são apagadas) |
+| `db_path` | str | `~/.astroframe/feedback.db` | Base SQLite com o histórico de execuções e ajustes |
+| `learning_rate` | float | `0.3` | Fração do delta aplicado por execução |
+| `user_weight` | float | `2.0` | Multiplicador quando o utilizador avalia manualmente |
+| `history_limit` | int | `12` | Execuções recentes consideradas por perfil |
 
 ### `lucky`
 | Campo | Tipo | Padrão | Descrição |

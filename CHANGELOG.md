@@ -5,6 +5,46 @@ Todas as mudanças notáveis do AstroFrame serão documentadas neste ficheiro.
 O formato segue [Keep a Changelog](https://keepachangelog.com/pt-PT/1.1.0/),
 e o versionamento [SemVer](https://semver.org/lang/pt-BR/).
 
+## [0.4.0] - 2026-08-13
+
+### Adicionado
+
+- **Companheiros de eclipse (ex.: a Lua a entrar no Sol)**: `find_all_disks`
+  agora faz um **segundo passe Hough com `minDist` reduzido** (1/4 do normal)
+  para encontrar círculos interiores ao astro maior, que o passe normal
+  descartaria. A interface desenha-os a **amarelo** (astro maior a verde,
+  reflexos da lente a vermelho), tanto no separador Imagem como no Vídeo.
+- **Filtro de círculos-ghost por área** (`_is_occluded_artifact`): um círculo
+  quase totalmente contido no astro maior é descartado quando o contraste com
+  o anel à sua volta é fraco (o bordos Sol+Lua detetados como um só círculo);
+  compara a sobreposição de **área** (e não só o centro), resistente ao
+  refinamento por centroide.
+- **Polimento por astros** (`core/polish.py` reescrito): cada astro recebe o
+  seu próprio realce (esticamento local de contraste + brilho, com silhuetas
+  escuras e uniformes — ex.: Lua em eclipse — preservadas intactas) e a
+  imagem é **remontada sem costuras** por blend de máscaras com feather
+  (sobreposições = média suave dos realces). A linha de recorte
+  (`corona_scale`) dilui o anel até ao fundo.
+- **Fundo = média do fundo original** (`polish.background_fill`, agora por
+  omissão) em vez de preto puro; `polish.black_background` volta a optar pelo
+  preto e `polish.brightness` controla o brilho extra dos astros.
+- **Capa de discos**: `find_all_disks` devolve no máximo 5 discos (`_MAX_DISKS`).
+- `find_all_disks` aceita imagens em escala de cinza `(H, W)`.
+
+### Corrigido
+
+- Reflexos a desenhar-se a vermelho dentro do astro maior (o separador
+  principal/companheiro/reflexo agora é pelo centro em relação ao raio do
+  astro maior).
+- Polimento a apagar companheiros de eclipse: só círculos com o centro
+  **fora** do astro maior são removidos como reflexos.
+
+### Documentação
+
+- `docs/USO.md` e `docs/API.md` atualizados para o polimento por astros, o
+  novo `PolishConfig` e a deteção em dois passes; suíte com **221 testes e
+  cobertura de 100%**.
+
 ## [0.3.0] - 2026-08-13
 
 ### Adicionado

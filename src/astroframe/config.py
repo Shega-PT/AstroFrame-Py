@@ -92,18 +92,23 @@ class StackingConfig:
 
 @dataclass
 class PolishConfig:
-    """Polimento final: fundo preto, contorno redondo e remoção de reflexos.
+    """Polimento por astros: recorte, diluição com o fundo e remoção de reflexos.
 
-    `corona_scale` é o raio mantido em torno do disco (1.0 = só o disco,
-    1.6 = disco + coroa). `feather` é a fração do raio usada para suavizar
-    o contorno (limbo "perfeito"); `reflection_min_radius` é o raio mínimo
-    (px) dos círculos-ghost considerados reflexos a remover.
+    Cada astro detetado (Sol, Lua, ...) recebe o seu próprio realce — `band`,
+    `feather` e `brightness` — e é remontado por blend de máscaras sobrepostas,
+    sem costuras. `corona_scale` é a linha de recorte (× raio do astro): entre
+    o bordo do astro e essa linha a imagem é **diluída** até ao fundo. O fundo
+    é a média do fundo original (`background_fill`) ou preto puro
+    (`black_background`); `remove_reflections` elimina círculos-ghost com o
+    centro fora do astro maior.
     """
 
     enabled: bool = True
     corona_scale: float = 1.6
     feather: float = 0.02
-    black_background: bool = True
+    background_fill: bool = True
+    black_background: bool = False
+    brightness: float = 0.15
     remove_reflections: bool = True
     reflection_min_radius: int = 8
 
