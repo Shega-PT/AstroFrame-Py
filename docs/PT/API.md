@@ -448,6 +448,6 @@ class FeedbackDB(path=None):               # SQLite com locking retry (WAL)
   `judicial_override`/`factor` for nula); regras: avaliações boas e consistentes
   suavizam o ajuste (`user_weight`), avaliações más aplicam denoise extra
   com ruído (métricas >`1.0`), coroa fraca aumenta o brilho do polimento, disco
-  pequeno reduz os raios do detector; os valores são limitados aos intervalos
+  pequeno reduz os raios do detetor; os valores são limitados aos intervalos
   válidos.
 - `FeedbackDB.default_path() -> Path`, `.path -> Path`, `.close()`.

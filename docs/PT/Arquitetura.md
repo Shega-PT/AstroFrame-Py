@@ -10,9 +10,9 @@ O sistema divide-se em três etapas principais:
 
 # 1 Rastreamento e Estabilização de Vídeo (Cancelamento de Trepidação)
 
-Em vez de tentar estabilizar o fundo (que é escuro ou uniforme), o algoritmo detecta o centroide do Sol/Lua em cada frame e move a imagem para manter o eclipse sempre no centro exato do frame.
+Em vez de tentar estabilizar o fundo (que é escuro ou uniforme), o algoritmo deteta o centroide do Sol/Lua em cada frame e move a imagem para manter o eclipse sempre no centro exato do frame.
 
-Detecção de Forma: Utiliza a Transformada de Hough para Círculos (cv2.HoughCircles) ou detecção de contornos maiores (cv2.findContours).
+Deteção de Forma: Utiliza a Transformada de Hough para Círculos (cv2.HoughCircles) ou deteção de contornos maiores (cv2.findContours).
 
 Reenquadramento Automático: Se a câmara der um salto rápido, o algoritmo calcula o vetor de deslocamento do centro $(x, y)$ do Sol em relação ao centro do frame e re-alinha a imagem.
 

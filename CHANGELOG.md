@@ -99,11 +99,11 @@ e o versionamento [SemVer](https://semver.org/lang/pt-BR/).
 
 ### Adicionado
 
-- **Detecção de múltiplos discos** (`find_all_disks` em `core/stabilizer.py`):
+- **Deteção de múltiplos discos** (`find_all_disks` em `core/stabilizer.py`):
   em vez de apenas o principal, são detetados o disco principal e os seus
   **reflexos** (Hough + contornos, com fusão de duplicados e preservação do
   mais luminoso a cada centro). O estabilizador continua a usar o principal e
-  mantém a última detecção em frames sem disco (`last_detection`).
+  mantém a última deteção em frames sem disco (`last_detection`).
 - **Polimento** (`core/polish.py`): `polish_image()` aplica brilho ao disco
   principal (mantendo a coroa desfocada), remoção dos reflexos e é usado no
   preview/frame final e no vídeo exportado.
@@ -118,7 +118,7 @@ e o versionamento [SemVer](https://semver.org/lang/pt-BR/).
   coroa fraca, etc.). Log de aprendizagem com o histórico e as razões em SQLite
   (variável `ASTROFRAME_FEEDBACK_DB` para localização).
 - **Vídeos sem disco**: o pipeline estabiliza/preview pula o polimento e a
-  avaliação funciona sem detecção (antes ocorria falha).
+  avaliação funciona sem deteção (antes ocorria falha).
 - Suíte expandida para **205 testes com cobertura de 100%** do pacote.
 
 ### Corrigido

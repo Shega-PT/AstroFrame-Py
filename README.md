@@ -11,11 +11,11 @@ Estabilização geométrica e melhoria automática de fotos e vídeos de eclipse
 - **Lucky imaging** — descarte de frames borrados por variância do Laplaciano, com limiar estimado estatisticamente a partir do próprio vídeo.
 - **Stacking** — combinação (mediana ou média) dos N melhores frames, alinhados por centralização, para reduzir ruído.
 - **Anti-trepidação temporal** — suavização do centroide (EMA) e reutilização do último deslocamento válido quando um frame não tem deteção.
-- **Detecção de múltiplos discos** — além do disco principal, são detetados os **reflexos** (Hough + contornos); o polimento elimina os reflexos e o vídeo ao vivo mostra-os a vermelho.
+- **Deteção de múltiplos discos** — além do disco principal, são detetados os **reflexos** (Hough + contornos); o polimento elimina os reflexos e o vídeo ao vivo mostra-os a vermelho.
 - **Polimento e avaliação automática** — `polish_image()` dá brilho ao disco mantendo a coroa; `score_image()` atribui **estrelas (0–5)** ao resultado (ruído, contraste, tamanho e cor da coroa).
 - **Calibração com exemplos** — interface dedicada (`python calibrate.py`) que carrega as fotos e vídeos de `samples/`, permite **ajustar à mão os círculos** (adicionar, remover, mover) e valida a deteção automática contra o ground truth em todas as amostras (recall, precisão, IoU, erros + sugestões de parâmetros).
 - **Aprendizagem por feedback** — cada execução fica em SQLite; para além da avaliação automática, pode avaliar manualmente (0–5 estrelas) e o AstroFrame **ajusta os sliders automaticamente** na próxima execução com o mesmo perfil de câmara, mostrando o histórico/log no próprio interface.
-- **Interface Gradio** — dois separadores: **Imagem** (Antes/Depois, sliders, zoom na coroa/borda) e **Vídeo** (processamento ao vivo com os discos detetados, preview final em frames espaçados e exportação opcional). Ao carregar um vídeo, os **metadados** são lidos (ffprobe/OpenCV/EXIF) e os **parâmetros são sugeridos automaticamente** (ISO → denoising, resolução → raios do detector, bitrate → compressão), mantendo-se editáveis.
+- **Interface Gradio** — dois separadores: **Imagem** (Antes/Depois, sliders, zoom na coroa/borda) e **Vídeo** (processamento ao vivo com os discos detetados, preview final em frames espaçados e exportação opcional). Ao carregar um vídeo, os **metadados** são lidos (ffprobe/OpenCV/EXIF) e os **parâmetros são sugeridos automaticamente** (ISO → denoising, resolução → raios do detetor, bitrate → compressão), mantendo-se editáveis.
 - **CLI** — lote de fotos, vídeos (estabilizar/melhorar/stack), logs e barra de progresso.
 
 ## Instalação
