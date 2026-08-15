@@ -9,10 +9,11 @@ in [API.md](API.md).
 1. [Installation](#installation)
 2. [Web interface (Gradio)](#web-interface-gradio)
 3. [Calibration](#calibration)
-4. [Command line](#command-line)
-5. [Configuration (config.yaml)](#configuration-configyaml)
-6. [Video workflow](#video-workflow)
-7. [Limitations and notes](#limitations-and-notes)
+4. [Detection validation and training](#detection-validation-and-training)
+5. [Command line](#command-line)
+6. [Configuration (config.yaml)](#configuration-configyaml)
+7. [Video workflow](#video-workflow)
+8. [Limitations and notes](#limitations-and-notes)
 
 ---
 
@@ -113,14 +114,14 @@ several machines).
 ## Calibration
 
 AstroFrame includes a **dedicated calibration interface**: it loads the photos
-and videos from the [samples/](../../samples/README.md) folder, shows the
-detection with circles (circular bounding boxes) that can be **added, removed
-and moved manually**, and validates the automatic detection against the ground
-truth on **all** samples.
+and videos from the [samples/](../../samples/README.md) folder and lets you
+**draw the bodies by hand** and validate the automatic detection against the
+ground truth on **all** samples.
 
 ```bash
-python calibrate.py                          # interface at http://127.0.0.1:7860
-python calibrate.py --samples samples --port 7861
+python calibrate.py                          # native desktop window (tkinter)
+python calibrate.py --ui gradio              # browser interface
+python calibrate.py --samples samples
 astroframe calibrate --samples samples       # equivalent (installed CLI)
 ```
 
@@ -135,25 +136,39 @@ astroframe calibrate --samples samples       # equivalent (installed CLI)
 
 ### Workflow
 
-1. **Choose the sample** — the dropdown lists all items
-   (`IMG …` for images, `VID … #frame` for video frames).
-2. **Adjust the circles** — each circle is a layer over the image:
-   - **drag** the layer → moves the circle;
-   - **brush** over the body → adds (the painting is converted to a circle at
-     the center of what you painted);
-   - **eraser** → removes.
-   - The pre-filled circle is the stored ground truth; without ground truth,
-     the **automatic detection** enters as a starting point.
-3. **Save adjustments** — writes the item's ground truth to
-   `samples/calibration.json` (local file, ignored by git).
-4. **Automatic detection** — restores the circles detected by
-   `find_all_disks` on the current item (replaces what is in the editor).
-5. **Validate all samples** — runs the automatic detection on everything and
-   compares it with the manual ground truth: per sample and globally it
-   returns recall, precision, mean IoU, center error (px) and radius error
-   (%), false negatives/positives, a **calibration score (0–100)** and
-   **parameter suggestions** (e.g. lower `min_radius` if small disks fail,
-   raise `param2` if there are false detections).
+The flow works in **two passes**:
+
+1. **1st pass — manual (detection off by default):**
+   1. **Choose the sample** — the panel list shows all items
+      (`IMG …` for images, `VID … #frame` for video frames).
+   2. **Draw the bodies** — on the canvas:
+      - **click empty space** → creates a circle (or ellipse, per the
+        selector) at that point;
+      - **drag the interior** of the selected shape → moves the center;
+      - **drag the right handle** → adjusts the horizontal radius; **top
+        handle** → vertical radius (ellipse); the Radius X/Radius Y sliders do
+        the same fine-tuning in real time;
+      - **mouse wheel** → zoom on the cursor; drag with the right/middle
+        button → pan; **Delete** removes the selected shape, arrow keys move
+        it 1 px (Shift = 10 px).
+   3. **Save (Ctrl+S)** — writes the item's ground truth to
+      `samples/calibration.json` (local file, ignored by git).
+2. **2nd pass — validation (turn on "Automatic detection on load"):**
+   4. **Samples without ground truth** are filled in automatically by the
+      detection; saved ones open exactly as you left them. **Adjust** what is
+      needed (same gestures) and save again.
+   5. **Validate all samples** — runs the automatic detection on everything
+      and compares it with the manual ground truth: per sample and globally it
+      returns recall, precision, mean IoU, center error (px) and radius error
+      (%), false negatives/positives, a **calibration score (0–100)** and
+      **parameter suggestions** (e.g. lower `min_radius` if small disks fail,
+      raise `param2` if there are false detections).
+   6. The parameter sliders re-run the detection on release (with detection
+      on), to fine-tune `param2`/radii without leaving the sample.
+
+> Ellipses are stored as objects (with `ry` in the JSON); validation uses
+> mask-based IoU when ellipses are present and the geometric radius for the
+> errors.
 
 ### What the calibration is for
 
@@ -162,6 +177,52 @@ automatic detection. With a varied folder (eclipses, Moon, Sun, planets —
 large and small disks, high and low contrast), the validation shows where the
 detection fails and what to adjust in the `config.yaml` before processing the
 real material.
+
+## Detection validation and training
+
+`validator.py` uses that same ground truth to **fine-tune the detection per
+shape**: it walks the samples one by one, shows what `find_all_disks` found
+(main disk + eclipse companions) over the image, and learns to tell correct
+detections from false ones.
+
+```bash
+python validator.py                          # desktop window (tkinter)
+python validator.py --check                  # report without interface
+python validator.py --auto --series 3        # automatic training (3 series)
+python validator.py --auto --iou 0.7         # minimum IoU with the guide
+python validator.py --reset-state --check    # start over and verify
+```
+
+### How it works
+
+1. **Manual round** — on each sample you see the detection and the manual
+   guide (`calibration.json`); **Accept/Reject** says whether the shape is
+   right.
+   - With an **on-detect preview**: the detection is drawn over the image in
+     real time before asking for the verdict.
+2. **Automatic training (`--auto`)** — no window: each series re-detects the
+   samples and **self-evaluates** every shape against the guide (configurable
+   minimum IoU with `--iou`). Each correct shape **rewards** the parameters
+   that found it; each false or missed shape is **punished** (doubled for
+   stubborn rejections). The process ends with 100% of the material processed.
+3. **Trainable weights (7)** — `param2`, `param1`, `dp`,
+   `gaussian_kernel_size`, `gaussian_sigma`, `occluded_ratio`,
+   `occluded_ring`: each has reward/punish deltas, minimum and maximum bounds
+   and an application history.
+4. **Final report** — detection score, trained weights with **ⓘ tooltips**
+   explaining each parameter, and the **Save** button exports the trained
+   configuration to `trained_config.json` (in the samples folder), ready for
+   the real system.
+
+### State
+
+- Progress is kept in `validator_state.json` (in the samples folder by
+  default): rounds, series, weight/delta history and the current minimum IoU.
+- `--reset-state` wipes everything (including the history) and starts over;
+  alone it opens the interface afterwards, combined with `--check`/`--auto` it
+  runs without a window.
+- `--state file.json` changes the state location; `--export out.json` changes
+  the destination of the saved report.
 
 ## Command line
 
@@ -174,6 +235,10 @@ The complete subcommands (`astroframe --help`):
 | `video` | Processes a video (`--mode stabilize\|enhance\|stack`) |
 | `config-template` | Generates `config.yaml` with default values |
 | `calibrate` | Opens the calibration interface (`--samples folder/`) |
+
+The detection validation/training is a standalone script (see [Detection
+validation and training](#detection-validation-and-training)):
+`python validator.py [--check|--auto|--reset-state|--iou N]`.
 
 ### Batch photos
 

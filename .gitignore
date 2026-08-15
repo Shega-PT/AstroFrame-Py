@@ -16,3 +16,5 @@ outputs/
 *.MOV
 *.mkv
 samples/calibration.json
+samples/validator_state.json
+samples/trained_config.json

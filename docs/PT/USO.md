@@ -9,10 +9,11 @@ em [API.md](API.md).
 1. [Instalação](#instalação)
 2. [Interface web (Gradio)](#interface-web-gradio)
 3. [Calibração](#calibração)
-4. [Linha de comando](#linha-de-comando)
-5. [Configuração (config.yaml)](#configuração-configyaml)
-6. [Workflow de vídeo](#workflow-de-vídeo)
-7. [Limitações e notas](#limitações-e-notas)
+4. [Validação e treino da deteção](#validação-e-treino-da-deteção)
+5. [Linha de comando](#linha-de-comando)
+6. [Configuração (config.yaml)](#configuração-configyaml)
+7. [Workflow de vídeo](#workflow-de-vídeo)
+8. [Limitações e notas](#limitações-e-notas)
 
 ---
 
@@ -118,8 +119,9 @@ movidos manualmente**, e valida a deteção automática contra o ground truth em
 **todas** as amostras.
 
 ```bash
-python calibrate.py                          # interface em http://127.0.0.1:7860
-python calibrate.py --samples samples --port 7861
+python calibrate.py                          # janela desktop (tkinter)
+python calibrate.py --ui gradio              # interface no navegador
+python calibrate.py --samples samples
 astroframe calibrate --samples samples       # equivalente (CLI instalada)
 ```
 
@@ -134,25 +136,38 @@ astroframe calibrate --samples samples       # equivalente (CLI instalada)
 
 ### Fluxo de trabalho
 
-1. **Escolher a amostra** — o dropdown lista todos os itens
-   (`IMG …` para imagens, `VID … #frame` para frames de vídeo).
-2. **Ajustar os círculos** — cada círculo é uma camada sobre a imagem:
-   - **arrastar** a camada → move o círculo;
-   - **pincel** por cima do astro → adiciona (a pintura é convertida em
-     círculo no centro do que pintaste);
-   - **borracha** → remove.
-   - O círculo pré-preenchido é o ground truth guardado; sem ground truth, a
-     **deteção automática** entra como ponto de partida.
-3. **Guardar ajustes** — grava o ground truth do item em
-   `samples/calibration.json` (ficheiro local, ignorado pelo git).
-4. **Deteção automática** — repõe os círculos detetados por
-   `find_all_disks` no item atual (substitui o que está no editor).
-5. **Validar todas as amostras** — corre a deteção automática em tudo e
-   compara com o ground truth manual: por amostra e global devolve
-   recall, precisão, IoU médio, erro do centro (px) e do raio (%), falsos
-   negativos/positivos, um **score de calibração (0–100)** e **sugestões de
-   parâmetros** (ex.: baixar `min_radius` se discos pequenos falham,
-   subir `param2` se houver deteções falsas).
+O fluxo divide-se em **duas passagens**:
+
+1. **1.ª passagem — manual (deteção desligada por omissão):**
+   1. **Escolher a amostra** — a lista do painel mostra todos os itens
+      (`IMG …` para imagens, `VID … #frame` para frames de vídeo).
+   2. **Desenhar os astros** — no canvas:
+      - **clique em espaço vazio** → cria um círculo (ou elipse, conforme o
+        seletor) nesse ponto;
+      - **arrastar o interior** da forma selecionada → move o centro;
+      - **arrastar a pega direita** → ajusta o raio horizontal; **pega de
+        topo** → raio vertical (elipse); os sliders Raio X/Raio Y fazem o
+        mesmo ajuste fino em tempo real;
+      - **roda do rato** → zoom no cursor; arrastar com o botão direito/médio
+        → deslocar; **Delete** elimina a forma selecionada, setas movem 1 px
+        (Shift = 10 px).
+   3. **Guardar (Ctrl+S)** — grava o ground truth do item em
+      `samples/calibration.json` (ficheiro local, ignorado pelo git).
+2. **2.ª passagem — validação (liga "Deteção automática ao carregar):**
+   4. **Amostras sem ground truth** são preenchidas automaticamente pela
+      deteção; as guardadas abrem exatamente como as deixaste. **Ajusta** o
+      que for preciso (mesmos gestos) e volta a guardar.
+   5. **Validar tudo** — corre a deteção automática em todas as amostras e
+      compara com o ground truth manual: por amostra e global devolve
+      recall, precisão, IoU médio, erro do centro (px) e do raio (%),
+      falsos negativos/positivos, um **score de calibração (0–100)** e
+      **sugestões de parâmetros** (ex.: baixar `min_radius` se discos
+      pequenos falham, subir `param2` se houver deteções falsas).
+   6. Os sliders de parâmetros re-correm a deteção ao largar (com a deteção
+      ligada), para afinar `param2`/raios/distância sem sair da amostra.
+
+> Elipses são guardadas como objetos (com `ry` no JSON); a validação usa
+> IoU por máscara quando há elipses e o raio geométrico para os erros.
 
 ### Para que serve a calibração
 
@@ -161,6 +176,50 @@ deteção automática. Com uma pasta variada (eclipses, Lua, Sol, planetas —
 discos grandes e pequenos, alto e baixo contraste), a validação mostra onde a
 deteção falha e o que ajustar no `config.yaml` antes de processar o material
 real.
+
+## Validação e treino da deteção
+
+O `validator.py` usa esse mesmo ground truth para **afinar a deteção por
+forma**: percorre as amostras uma a uma, mostra o que o `find_all_disks`
+encontrou (disco principal + companheiros de eclipse) sobre a imagem, e
+aprende a distinguir deteções corretas de falsas.
+
+```bash
+python validator.py                          # janela desktop (tkinter)
+python validator.py --check                  # relatório sem interface
+python validator.py --auto --series 3        # treino automático (3 séries)
+python validator.py --auto --iou 0.7         # exigência mínima com o guia
+python validator.py --reset-state --check    # recomeça do zero e verifica
+```
+
+### Como funciona
+
+1. **Ronda manual** — em cada amostra vês a deteção e o guia manual
+   (`calibration.json`); **Aceitar/Rejeitar** diz se a forma está certa.
+   - Com um **preview ao detetar**: a deteção desenha-se em cima da imagem em
+     tempo real antes de pedir o veredito.
+2. **Treino automático (`--auto`)** — sem janela: cada série re-deteça as
+   amostras e **auto-avalia** cada forma contra o guia (IoU mínimo configurável
+   com `--iou`). Cada forma correta dá **recompensa** aos parâmetros que a
+   encontraram; cada forma falsa ou falhada dá **punição** (dobrada para
+   rejeições teimosas). O processo termina com 100% do material processado.
+3. **Pesos treináveis (7)** — `param2`, `param1`, `dp`,
+   `gaussian_kernel_size`, `gaussian_sigma`, `occluded_ratio`,
+   `occluded_ring`: cada um tem deltas de recompensa/punição, limites mínimos
+   e máximos e histórico de aplicação.
+4. **Relatório final** — score da deteção, pesos treinados com **tooltips ⓘ**
+   a explicar cada parâmetro, e o botão **Salvar** exporta a configuração
+   treinada para `trained_config.json` (na pasta de samples), pronta a usar no
+   sistema real.
+
+### Estado
+
+- O progresso fica em `validator_state.json` (na pasta de samples, por
+  omissão): rondas, séries, histórico de pesos/deltas e o IoU mínimo atual.
+- `--reset-state` apaga tudo (incluindo o histórico) e recomeça; sozinho abre
+  depois a interface, combinado com `--check`/`--auto` corre sem janela.
+- `--state ficheiro.json` muda o local do estado; `--export saida.json` muda o
+  destino do relatório salvo.
 
 ## Linha de comando
 
@@ -173,6 +232,10 @@ Os subcomandos completos (`astroframe --help`):
 | `video` | Processa um vídeo (`--mode stabilize\|enhance\|stack`) |
 | `config-template` | Gera `config.yaml` com os valores por omissão |
 | `calibrate` | Abre a interface de calibração (`--samples pasta/`) |
+
+A validação/treino da deteção é um script à parte (ver
+[Validação e treino da deteção](#validação-e-treino-da-deteção)):
+`python validator.py [--check|--auto|--reset-state|--iou N]`.
 
 ### Fotografias em lote
 

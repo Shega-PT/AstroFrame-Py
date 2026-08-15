@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
+import math
+
+import pytest
+
 from astroframe.calibration.validate import (
     circle_iou,
     match_circles,
+    shape_iou,
+    shape_mean_radius,
     suggest_parameters,
     validate_all,
     validate_item,
@@ -14,6 +20,19 @@ from astroframe.core.stabilizer import DiskDetection
 
 MANUAL = DiskDetection(100, 100, 50)
 DETECTED = DiskDetection(105, 98, 45)
+ELLIPSE = DiskDetection(100, 100, 50, 30)
+
+
+def test_shape_iou_com_elipses():
+    assert shape_iou(ELLIPSE, ELLIPSE) == pytest.approx(1.0)
+    assert 0.0 < shape_iou(ELLIPSE, DiskDetection(100, 100, 50)) < 1.0
+    assert shape_iou(ELLIPSE, DiskDetection(300, 100, 50)) == 0.0
+    assert 0.0 < shape_iou(ELLIPSE, DiskDetection(105, 100, 50, 30)) < 1.0
+
+
+def test_shape_mean_radius():
+    assert shape_mean_radius(DiskDetection(100, 100, 50)) == 50.0
+    assert shape_mean_radius(ELLIPSE) == pytest.approx(math.sqrt(1500))
 
 
 def test_circle_iou_identicos():
@@ -138,7 +157,7 @@ def test_sugestoes_falsos_negativos_e_positivos():
     report = validate_all([("a.jpg", [MANUAL], [DETECTED, DiskDetection(300, 300, 40)])])
     suggestions = suggest_parameters(report)
     text = " ".join(suggestions)
-    assert "min_radius" in text and "param2" in text
+    assert "param2" in text and "param1" in text
 
 
 def test_sugestoes_falsos_negativos_apenas():

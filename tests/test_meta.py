@@ -267,7 +267,6 @@ def test_ffprobe_falha_ou_json_invalido(monkeypatch):
 def test_suggest_config_raios_por_resolucao():
     meta = MediaMetadata(width=1920, height=1080)
     cfg = suggest_config(meta)
-    assert cfg.stabilizer.min_radius == int(1080 * 0.08)
     assert cfg.stabilizer.max_radius == int(1080 * 0.45)
 
 
@@ -302,7 +301,7 @@ def test_suggest_config_sem_metadados_usa_padroes():
     cfg = suggest_config(MediaMetadata())
     assert isinstance(cfg, AstroFrameConfig)
     assert cfg.denoise.h == 5.0
-    assert cfg.stabilizer.min_radius == 30
+    assert cfg.stabilizer.max_radius == 400
 
 
 # ---------------------------------------------------------------------------

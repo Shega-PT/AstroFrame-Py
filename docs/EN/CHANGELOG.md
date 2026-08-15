@@ -5,6 +5,65 @@ All notable changes to AstroFrame will be documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and versioning [SemVer](https://semver.org/).
 
+## [0.6.0] - 2026-08-14
+
+### Added
+
+- **Detection validation and training** (`validator.py` at the root) — a
+  native desktop interface (tkinter) that walks the samples in `samples/` one
+  by one, shows the detection (main + companions) over the image, and lets
+  you **accept/reject** each shape against the manual guide
+  (`calibration.json`):
+  - trainable per-shape weights: **7 parameters** (`param2`, `param1`, `dp`,
+    `gaussian_kernel_size`, `gaussian_sigma`, `occluded_ratio`,
+    `occluded_ring`) with reward/punish deltas, bounds and history;
+  - **automatic training** (`--auto`): re-detection series with self-evaluation
+    against the guide (configurable minimum IoU), reward/punish per detected
+    or missed shape, doubled punishment for stubborn rejections, until 100%
+    of the material is processed;
+  - **final report** with score, trained weights and ⓘ tooltips per parameter
+    + a **Save** button exporting the trained configuration to
+    `trained_config.json` (applicable to the real system);
+  - **on-detect preview** — the detection is drawn over the image in real time
+    before you are asked to judge;
+  - **persistent state** in `validator_state.json` (rounds, series, weight and
+    delta history) with `--reset-state` to start over;
+  - `--check` mode (report without interface) and an interface with minimum
+    IoU sliders, zoom/pan and disk drawing.
+- **Desktop calibration editor** (`src/astroframe/ui/calibration_tk.py`) — a
+  native window (tkinter) in `calibrate.py` (default) replacing the browser
+  editor:
+  - click creates a circle/ellipse, drag moves the center, **handles** adjust
+    the horizontal/vertical radii, Radius X/Radius Y sliders in real time,
+    wheel = zoom, right button = pan, Delete/arrows to remove and nudge
+    (Shift = 10);
+  - **two passes**: 1st manual (detection off) → ground truth; 2nd with
+    **automatic detection on load** to fill/validate;
+  - `param2`/max radius sliders re-run the detection on release;
+  - **ellipses** supported in the ground truth (`ry` in the JSON) and in
+    validation (mask-based IoU + geometric radius for the errors);
+  - `calibrate.py --ui gradio` keeps the old browser editor.
+- **Detection without explicit `min_radius`/`min_dist`** — radii are now
+  derived automatically from the image (resolution, main diameter) and the
+  minimum distance is inferred from the detection; calibration suggests only
+  the parameters that still exist (`param2`/`param1`).
+- **100% test coverage** on all code (`validator.py` + `src/astroframe/`,
+  ~435 tests): interface tests with real Tk (hidden window), deterministic
+  threads via `monkeypatch`, and infrastructure that works around the
+  Python 3.12 GC abort during thread bootstrap with coverage active
+  (`gc.disable()` + safe collection on the main thread).
+
+### Fixed
+
+- `RuntimeError: main thread is not in main loop` in automatic training — the
+  IoU slider value was read inside the worker thread; it is now captured on
+  the main thread before starting the series.
+- Intermittent suite abort (`Fatal Python error: Aborted`) when running
+  coverage on tests with threads + Tk (GC collecting during a worker thread's
+  bootstrap) — cyclic GC disabled for the test session.
+- Uninitialized `_pan_start` in the validation editor (drag without a prior
+  click raised `AttributeError`).
+
 ## [0.5.0] - 2026-08-13
 
 ### Added

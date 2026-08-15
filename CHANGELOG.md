@@ -5,6 +5,64 @@ Todas as mudanças notáveis do AstroFrame serão documentadas neste ficheiro.
 O formato segue [Keep a Changelog](https://keepachangelog.com/pt-PT/1.1.0/),
 e o versionamento [SemVer](https://semver.org/lang/pt-BR/).
 
+## [0.6.0] - 2026-08-14
+
+### Adicionado
+
+- **Validação e treino da deteção** (`validator.py` na raiz) — interface
+  desktop nativa (tkinter) que percorre as amostras de `samples/` uma a uma,
+  mostra a deteção (principal + companheiros) sobre a imagem, e deixa
+  **aceitar/rejeitar** cada forma comparando-a com o guia manual
+  (`calibration.json`):
+  - pesos treináveis por forma: **7 parâmetros** (`param2`, `param1`, `dp`,
+    `gaussian_kernel_size`, `gaussian_sigma`, `occluded_ratio`,
+    `occluded_ring`) com deltas de recompensa/punição, limites e histórico;
+  - **treino automático** (`--auto`): séries de re-deteção com auto-avaliação
+    contra o guia (IoU mínimo configurável), recompensa/punição por forma
+    detetada ou falhada, punição dobrada para rejeições teimosas, até 100% do
+    material processado;
+  - **relatório final** com score, pesos treinados e tooltips ⓘ por parâmetro
+    + botão **Salvar** que exporta a configuração treinada para
+    `trained_config.json` (aplicável ao sistema real);
+  - **preview ao detetar** (`on_detect`) — a deteção é desenhada em cima da
+    imagem em tempo real antes de seres convidado a julgar;
+  - **estado persistente** em `validator_state.json` (rondas, séries,
+    histórico de pesos e deltas) com `--reset-state` para começar de novo;
+  - modos `--check` (relatório sem interface) e interface com sliders de IoU
+    mínimo, zoom/pan e desenho dos discos.
+- **Editor de calibração desktop** (`src/astroframe/ui/calibration_tk.py`) —
+  janela nativa (tkinter) em `calibrate.py` (por omissão) substituindo o
+  editor do navegador:
+  - clique cria círculo/elipse, arrastar move o centro, **pegas** ajustam os
+    raios horizontal/vertical, sliders Raio X/Raio Y em tempo real, rodinha =
+    zoom, botão direito = pan, Delete/setas para eliminar e nudge (Shift = 10);
+  - **duas passagens**: 1.ª manual (deteção desligada) → ground truth;
+    2.ª com **deteção automática ao carregar** para preencher/validar;
+  - sliders de `param2`/raio máximo re-caem a deteção ao largar;
+  - **elipses** suportadas no ground truth (`ry` no JSON) e na validação
+    (IoU por máscara + raio geométrico para os erros);
+  - `calibrate.py --ui gradio` mantém o editor antigo no navegador.
+- **Deteção sem `min_radius`/`min_dist` explícitos** — os raios passam a
+  derivar automaticamente da imagem (resolução, diâmetro principal) e a
+  distância mínima é inferida da deteção; a calibração sugere apenas os
+  parâmetros que ainda existem (`param2`/`param1`).
+- **Cobertura de testes a 100%** em todo o código (`validator.py` +
+  `src/astroframe/`, ~435 testes): testes de interface com Tk real (janela
+  oculta), threads determinísticas por `monkeypatch`, e infraestrutura que
+  contorna o aborto do GC do Python 3.12 durante o bootstrap de threads com
+  cobertura ativa (`gc.disable()` + recolha segura na main thread).
+
+### Corrigido
+
+- `RuntimeError: main thread is not in main loop` no treino automático — o
+  valor do slider de IoU era lido dentro da thread de trabalho; agora é
+  capturado na thread principal antes de arrancar a série.
+- Aborto intermitente da suíte (`Fatal Python error: Aborted`) ao correr
+  cobertura em testes com threads + Tk (GC a recolher durante o bootstrap de
+  uma thread de trabalho) — GC cíclico desligado na sessão de testes.
+- `_pan_start` não inicializado no editor de validação (arrastar sem clique
+  prévio levantava `AttributeError`).
+
 ## [0.5.0] - 2026-08-13
 
 ### Adicionado

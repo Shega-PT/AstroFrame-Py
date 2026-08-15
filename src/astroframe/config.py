@@ -63,9 +63,8 @@ class UnsharpConfig:
 
 @dataclass
 class StabilizerConfig:
-    min_radius: int = 30
     max_radius: int = 400
-    min_dist: int = 100
+    max_disks: int = 8
     dp: float = 1.2
     param1: int = 50
     param2: int = 30
@@ -74,6 +73,8 @@ class StabilizerConfig:
     contour_fallback: bool = True
     auto_crop: bool = True
     jitter_alpha: float = 0.5
+    occluded_ratio: float = 0.75
+    occluded_ring: float = 1.25
 
 
 @dataclass

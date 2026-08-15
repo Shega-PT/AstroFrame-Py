@@ -6,6 +6,69 @@ fichier.
 Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et le
 versionnage [SemVer](https://semver.org/).
 
+## [0.6.0] - 2026-08-14
+
+### Ajouté
+
+- **Validation et entraînement de la détection** (`validator.py` à la racine)
+  — interface desktop native (tkinter) qui parcourt les échantillons de
+  `samples/` un par un, montre la détection (principale + compagnons) sur
+  l'image, et permet d'**accepter/rejeter** chaque forme par rapport au guide
+  manuel (`calibration.json`) :
+  - poids entraînables par forme : **7 paramètres** (`param2`, `param1`, `dp`,
+    `gaussian_kernel_size`, `gaussian_sigma`, `occluded_ratio`,
+    `occluded_ring`) avec deltas de récompense/punition, bornes et historique ;
+  - **entraînement automatique** (`--auto`) : séries de re-détection avec
+    auto-évaluation contre le guide (IoU minimum configurable), récompense/
+    punition par forme détectée ou manquée, punition doublée pour les rejets
+    obstinés, jusqu'à 100 % du matériel traité ;
+  - **rapport final** avec score, poids entraînés et infobulles ⓘ par
+    paramètre + bouton **Enregistrer** qui exporte la configuration entraînée
+    vers `trained_config.json` (applicable au système réel) ;
+  - **aperçu à la détection** — la détection se dessine sur l'image en temps
+    réel avant de demander le verdict ;
+  - **état persistant** dans `validator_state.json` (tours, séries, historique
+    des poids et deltas) avec `--reset-state` pour repartir de zéro ;
+  - mode `--check` (rapport sans interface) et interface avec curseurs d'IoU
+    minimum, zoom/pan et dessin des disques.
+- **Éditeur de calibration desktop** (`src/astroframe/ui/calibration_tk.py`) —
+  fenêtre native (tkinter) dans `calibrate.py` (par défaut), remplaçant
+  l'éditeur du navigateur :
+  - clic crée un cercle/une ellipse, glisser déplace le centre, **poignées**
+    ajustent les rayons horizontal/vertical, curseurs Rayon X/Rayon Y en
+    temps réel, molette = zoom, bouton droit = déplacement, Suppr/flèches
+    pour supprimer et déplacer (Maj = 10) ;
+  - **deux passes** : 1re manuelle (détection désactivée) → ground truth ;
+    2e avec **détection automatique au chargement** pour remplir/valider ;
+  - les curseurs `param2`/rayon max relancent la détection au relâchement ;
+  - **ellipses** prises en charge dans le ground truth (`ry` dans le JSON) et
+    dans la validation (IoU par masque + rayon géométrique pour les erreurs) ;
+  - `calibrate.py --ui gradio` conserve l'ancien éditeur navigateur.
+- **Détection sans `min_radius`/`min_dist` explicites** — les rayons sont
+  désormais dérivés automatiquement de l'image (résolution, diamètre
+  principal) et la distance minimale est déduite de la détection ; la
+  calibration ne suggère que les paramètres qui existent encore
+  (`param2`/`param1`).
+- **Couverture de tests à 100 %** sur tout le code (`validator.py` +
+  `src/astroframe/`, ~435 tests) : tests d'interface avec Tk réel (fenêtre
+  cachée), threads déterministes via `monkeypatch`, et infrastructure qui
+  contourne l'avortement du GC de Python 3.12 pendant le bootstrap des
+  threads avec couverture active (`gc.disable()` + collecte sûre sur le
+  thread principal).
+
+### Corrigé
+
+- `RuntimeError: main thread is not in main loop` dans l'entraînement
+  automatique — la valeur du curseur d'IoU était lue dans le thread de
+  travail ; elle est maintenant capturée sur le thread principal avant de
+  lancer la série.
+- Avortement intermittent de la suite (`Fatal Python error: Aborted`) en
+  exécutant la couverture sur des tests avec threads + Tk (GC pendant le
+  bootstrap d'un thread de travail) — GC cyclique désactivé pour la session
+  de tests.
+- `_pan_start` non initialisé dans l'éditeur de validation (glisser sans clic
+  préalable levait `AttributeError`).
+
 ## [0.5.0] - 2026-08-13
 
 ### Ajouté

@@ -13,7 +13,8 @@ Estabilização geométrica e melhoria automática de fotos e vídeos de eclipse
 - **Anti-trepidação temporal** — suavização do centroide (EMA) e reutilização do último deslocamento válido quando um frame não tem deteção.
 - **Deteção de múltiplos discos** — além do disco principal, são detetados os **reflexos** (Hough + contornos); o polimento elimina os reflexos e o vídeo ao vivo mostra-os a vermelho.
 - **Polimento e avaliação automática** — `polish_image()` dá brilho ao disco mantendo a coroa; `score_image()` atribui **estrelas (0–5)** ao resultado (ruído, contraste, tamanho e cor da coroa).
-- **Calibração com exemplos** — interface dedicada (`python calibrate.py`) que carrega as fotos e vídeos de `samples/`, permite **ajustar à mão os círculos** (adicionar, remover, mover) e valida a deteção automática contra o ground truth em todas as amostras (recall, precisão, IoU, erros + sugestões de parâmetros).
+- **Calibração com exemplos** — interface desktop nativa (`python calibrate.py`) que carrega as fotos e vídeos de `samples/`, permite **desenhar círculos/elipses à mão** (clique cria, arrastar move, pegas redimensionam) numa 1.ª passagem, ligar a **deteção automática** na 2.ª para preencher/validar as restantes amostras, e comparar tudo contra o ground truth em todas as amostras (recall, precisão, IoU, erros + sugestões de parâmetros).
+- **Validação e treino da deteção** — `validator.py` (janela desktop nativa) percorre as amostras, mostra a deteção com zoom/pan, e aprende **recompensando e punindo 7 parâmetros do detetor** forma a forma contra o guia manual; o **treino automático** (`--auto`) re-deteça em séries até 100% e exporta os **pesos treinados** para o sistema real.
 - **Aprendizagem por feedback** — cada execução fica em SQLite; para além da avaliação automática, pode avaliar manualmente (0–5 estrelas) e o AstroFrame **ajusta os sliders automaticamente** na próxima execução com o mesmo perfil de câmara, mostrando o histórico/log no próprio interface.
 - **Interface Gradio** — dois separadores: **Imagem** (Antes/Depois, sliders, zoom na coroa/borda) e **Vídeo** (processamento ao vivo com os discos detetados, preview final em frames espaçados e exportação opcional). Ao carregar um vídeo, os **metadados** são lidos (ffprobe/OpenCV/EXIF) e os **parâmetros são sugeridos automaticamente** (ISO → denoising, resolução → raios do detetor, bitrate → compressão), mantendo-se editáveis.
 - **CLI** — lote de fotos, vídeos (estabilizar/melhorar/stack), logs e barra de progresso.
@@ -43,6 +44,7 @@ Alternativa simples: `pip install -r requirements.txt`. Requer Python 3.10+.
 ```bash
 python main.py                             # interface web (Gradio) — frontend + backend juntos
 python calibrate.py                        # interface de calibração (samples/)
+python validator.py                        # validação/treino da deteção (samples/)
 astroframe serve                          # equivalente via CLI instalada
 astroframe process --input foto1.jpg foto2.jpg --output-dir outputs/
 astroframe video --input eclipse.mp4 --mode enhance
@@ -56,10 +58,22 @@ frontend no navegador e processa as imagens no backend (o motor em `core/` corre
 no mesmo processo, a cada clique em **Processar**). Opções: `--config`,
 `--host`, `--port`, `--share` e `--no-browser`.
 
-`calibrate.py` é a **interface de calibração**: carrega imagens e frames de
-vídeo de `samples/`, ajusta os círculos à mão (arrastar = mover, pincel =
-adicionar, borracha = remover) e **Validar todas** compara a deteção
-automática com o ground truth em todas as amostras.
+`validator.py` é a **validação/treino da deteção** (janela desktop nativa;
+`--check` para relatório sem interface, `--auto` para treino automático):
+compara a deteção com o guia manual de `calibration.json`, **recompensa/pune
+os parâmetros** por forma e termina com um relatório + pesos treinados
+exportáveis para o sistema real.
+
+`calibrate.py` é a **interface de calibração** (janela desktop nativa; usa
+`--ui gradio` para o navegador). Workflow em duas passagens:
+
+1. **1.ª passagem (deteção desligada)** — desenhas os astros à mão em todas as
+   amostras (clique cria círculo/elipse, arrastar move, pegas redimensionam) e
+   guardas: fica o ground truth em `calibration.json`.
+2. **2.ª passagem (deteção ligada)** — as amostras sem ground truth são
+   preenchidas automaticamente; as guardadas abrem como as deixaste; ajustas o
+   que for preciso e voltas a guardar. **Validar tudo** compara a deteção com o
+   ground truth em todas as amostras (recall, precisão, IoU) + sugestões.
 
 ## Documentação
 

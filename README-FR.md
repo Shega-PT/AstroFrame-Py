@@ -13,7 +13,8 @@ Stabilisation géométrique et amélioration automatique de photos et vidéos d'
 - **Anti-tremblement temporel** — lissage du centroïde (EMA) et réutilisation du dernier déplacement valide quand une frame n'a pas de détection.
 - **Détection de disques multiples** — en plus du disque principal, les **reflets** sont détectés (Hough + contours) ; le polissage supprime les reflets et la vidéo en direct les montre en rouge.
 - **Polissage et évaluation automatique** — `polish_image()` ajoute de la luminosité au disque en gardant la couronne ; `score_image()` attribue des **étoiles (0–5)** au résultat (bruit, contraste, taille et couleur de la couronne).
-- **Calibration par exemples** — interface dédiée (`python calibrate.py`) qui charge les photos et vidéos de `samples/`, permet **d'ajuster les cercles à la main** (ajouter, supprimer, déplacer) et valide la détection automatique par rapport au ground truth sur tous les échantillons (rappel, précision, IoU, erreurs + suggestions de paramètres).
+- **Calibration par exemples** — interface desktop native (`python calibrate.py`) qui charge les photos et vidéos de `samples/`, permet de **dessiner des cercles/ellipses à la main** (clic crée, glisser déplace, poignées redimensionnent) lors d'une 1re passe, activer la **détection automatique** à la 2e pour remplir/valider les échantillons restants, et compare tout au ground truth sur tous les échantillons (rappel, précision, IoU, erreurs + suggestions de paramètres).
+- **Validation et entraînement de la détection** — `validator.py` (fenêtre desktop native) parcourt les échantillons, montre la détection avec zoom/pan, et apprend en **récompensant et punissant 7 paramètres du détecteur** forme par forme contre le guide manuel ; l'**entraînement automatique** (`--auto`) re-détecte en séries jusqu'à 100 % et exporte les **poids entraînés** pour le système réel.
 - **Apprentissage par feedback** — chaque exécution est stockée en SQLite ; en plus de l'évaluation automatique, vous pouvez évaluer manuellement (0–5 étoiles) et AstroFrame **ajuste les sliders automatiquement** à la prochaine exécution avec le même profil de caméra, en montrant l'historique/journal dans l'interface elle-même.
 - **Interface Gradio** — deux onglets : **Image** (Avant/Après, sliders, zoom sur la couronne/le limbe) et **Vidéo** (traitement en direct avec les disques détectés, aperçu final à frames espacées et exportation facultative). Au chargement d'une vidéo, les **métadonnées** sont lues (ffprobe/OpenCV/EXIF) et les **paramètres sont suggérés automatiquement** (ISO → débruitage, résolution → rayons du détecteur, bitrate → compression), tout en restant modifiables.
 - **CLI** — lot de photos, vidéos (stabiliser/améliorer/stack), journaux et barre de progression.
@@ -44,6 +45,7 @@ Alternative simple : `pip install -r requirements.txt`. Nécessite Python 3.10+.
 ```bash
 python main.py                             # interface web (Gradio) — frontend + backend ensemble
 python calibrate.py                        # interface de calibration (samples/)
+python validator.py                        # validation/entraînement de la détection (samples/)
 astroframe serve                          # équivalent via la CLI installée
 astroframe process --input photo1.jpg photo2.jpg --output-dir outputs/
 astroframe video --input eclipse.mp4 --mode enhance
@@ -56,6 +58,12 @@ astroframe config-template                # génère un config.yaml modifiable
 le frontend dans le navigateur et traite les images dans le backend (le moteur
 dans `core/` tourne dans le même processus, à chaque clic sur **Traiter**).
 Options : `--config`, `--host`, `--port`, `--share` et `--no-browser`.
+
+`validator.py` est la **validation/entraînement de la détection** (fenêtre
+desktop native ; `--check` pour un rapport sans interface, `--auto` pour
+l'entraînement automatique) : il compare la détection au guide manuel de
+`calibration.json`, **récompense/punit les paramètres** forme par forme et se
+termine par un rapport + poids entraînés exportables vers le système réel.
 
 `calibrate.py` est l'**interface de calibration** : elle charge des images et
 des frames de vidéo depuis `samples/`, permet d'ajuster les cercles à la main

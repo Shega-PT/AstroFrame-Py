@@ -9,10 +9,11 @@ référence du code dans [API.md](API.md).
 1. [Installation](#installation)
 2. [Interface web (Gradio)](#interface-web-gradio)
 3. [Calibration](#calibration)
-4. [Ligne de commande](#ligne-de-commande)
-5. [Configuration (config.yaml)](#configuration-configyaml)
-6. [Workflow vidéo](#workflow-vidéo)
-7. [Limitations et remarques](#limitations-et-remarques)
+4. [Validation et entraînement de la détection](#validation-et-entraînement-de-la-détection)
+5. [Ligne de commande](#ligne-de-commande)
+6. [Configuration (config.yaml)](#configuration-configyaml)
+7. [Workflow vidéo](#workflow-vidéo)
+8. [Limitations et remarques](#limitations-et-remarques)
 
 ---
 
@@ -118,14 +119,14 @@ exemple pour partager l'apprentissage entre plusieurs machines).
 ## Calibration
 
 AstroFrame inclut une **interface dédiée à la calibration** : elle charge les
-photos et vidéos du dossier [samples/](../../samples/README.md), montre la
-détection avec des cercles (bounding boxes circulaires) qui peuvent être
-**ajoutés, supprimés et déplacés manuellement**, et valide la détection
-automatique par rapport au ground truth sur **toutes** les échantillons.
+photos et vidéos du dossier [samples/](../../samples/README.md) et permet de
+**dessiner les astres à la main** et de valider la détection automatique par
+rapport au ground truth sur **toutes** les échantillons.
 
 ```bash
-python calibrate.py                          # interface sur http://127.0.0.1:7860
-python calibrate.py --samples samples --port 7861
+python calibrate.py                          # fenêtre desktop native (tkinter)
+python calibrate.py --ui gradio              # interface navigateur
+python calibrate.py --samples samples
 astroframe calibrate --samples samples       # équivalent (CLI installée)
 ```
 
@@ -140,25 +141,42 @@ astroframe calibrate --samples samples       # équivalent (CLI installée)
 
 ### Workflow
 
-1. **Choisir l'échantillon** — le menu déroulant liste tous les éléments
-   (`IMG …` pour les images, `VID … #frame` pour les frames de vidéo).
-2. **Ajuster les cercles** — chaque cercle est un calque sur l'image :
-   - **glisser** le calque → déplace le cercle ;
-   - **pinceau** sur l'astre → ajoute (la peinture est convertie en cercle au
-     centre de ce que vous avez peint) ;
-   - **gomme** → supprime.
-   - Le cercle prérempli est le ground truth enregistré ; sans ground truth,
-     la **détection automatique** entre comme point de départ.
-3. **Enregistrer les ajustements** — écrit le ground truth de l'élément dans
-   `samples/calibration.json` (fichier local, ignoré par git).
-4. **Détection automatique** — restaure les cercles détectés par
-   `find_all_disks` sur l'élément courant (remplace ce qui est dans l'éditeur).
-5. **Valider tous les échantillons** — lance la détection automatique sur tout
-   et compare avec le ground truth manuel : par échantillon et globalement elle
-   retourne rappel, précision, IoU moyen, erreur du centre (px) et du rayon
-   (%), faux négatifs/positifs, un **score de calibration (0–100)** et des
-   **suggestions de paramètres** (ex. baisser `min_radius` si les petits
-   disques échouent, monter `param2` s'il y a des fausses détections).
+Le flux se déroule en **deux passes** :
+
+1. **1re passe — manuelle (détection désactivée par défaut) :**
+   1. **Choisir l'échantillon** — la liste du panneau affiche tous les
+      éléments (`IMG …` pour les images, `VID … #frame` pour les frames).
+   2. **Dessiner les astres** — sur le canvas :
+      - **cliquer sur un espace vide** → crée un cercle (ou une ellipse, selon
+        le sélecteur) à ce point ;
+      - **glisser l'intérieur** de la forme sélectionnée → déplace le centre ;
+      - **glisser la poignée droite** → ajuste le rayon horizontal ; **poignée
+        du haut** → rayon vertical (ellipse) ; les curseurs Rayon X/Rayon Y
+        font le même réglage fin en temps réel ;
+      - **molette** → zoom sur le curseur ; glisser avec le bouton
+        droit/milieu → déplacer ; **Suppr** supprime la forme sélectionnée,
+        les flèches la déplacent de 1 px (Maj = 10 px).
+   3. **Enregistrer (Ctrl+S)** — écrit le ground truth de l'élément dans
+      `samples/calibration.json` (fichier local, ignoré par git).
+2. **2e passe — validation (activez « Détection automatique au chargement ») :**
+   4. **Les échantillons sans ground truth** sont remplis automatiquement par
+      la détection ; ceux enregistrés s'ouvrent exactement comme vous les
+      avez laissés. **Ajustez** ce qu'il faut (mêmes gestes) et
+      réenregistrez.
+   5. **Valider tous les échantillons** — lance la détection automatique sur
+      tout et compare avec le ground truth manuel : par échantillon et
+      globalement elle retourne rappel, précision, IoU moyen, erreur du
+      centre (px) et du rayon (%), faux négatifs/positifs, un **score de
+      calibration (0–100)** et des **suggestions de paramètres** (ex. baisser
+      `min_radius` si les petits disques échouent, monter `param2` s'il y a
+      des fausses détections).
+   6. Les curseurs de paramètres relancent la détection au relâchement
+      (détection activée), pour affiner `param2`/rayons sans quitter
+      l'échantillon.
+
+> Les ellipses sont enregistrées comme objets (avec `ry` dans le JSON) ; la
+> validation utilise l'IoU par masque quand il y a des ellipses et le rayon
+> géométrique pour les erreurs.
 
 ### À quoi sert la calibration
 
@@ -167,6 +185,54 @@ détection automatique. Avec un dossier varié (éclipses, Lune, Soleil, planèt
 — disques grands et petits, contraste haut et bas), la validation montre où la
 détection échoue et quoi ajuster dans le `config.yaml` avant de traiter le
 matériel réel.
+
+## Validation et entraînement de la détection
+
+`validator.py` utilise ce même ground truth pour **affiner la détection par
+forme** : il parcourt les échantillons un par un, montre ce que
+`find_all_disks` a trouvé (disque principal + compagnons d'éclipse) sur
+l'image, et apprend à distinguer les bonnes détections des fausses.
+
+```bash
+python validator.py                          # fenêtre desktop (tkinter)
+python validator.py --check                  # rapport sans interface
+python validator.py --auto --series 3        # entraînement automatique (3 séries)
+python validator.py --auto --iou 0.7         # IoU minimum exigé avec le guide
+python validator.py --reset-state --check    # repartir de zéro et vérifier
+```
+
+### Comment ça marche
+
+1. **Tour manuel** — sur chaque échantillon vous voyez la détection et le
+   guide manuel (`calibration.json`) ; **Accepter/Rejeter** dit si la forme
+   est correcte.
+   - Avec un **aperçu à la détection** : la détection se dessine sur l'image
+     en temps réel avant de demander le verdict.
+2. **Entraînement automatique (`--auto`)** — sans fenêtre : chaque série
+   re-détecte les échantillons et **s'auto-évalue** forme par forme contre le
+   guide (IoU minimum configurable avec `--iou`). Chaque forme correcte
+   **récompense** les paramètres qui l'ont trouvée ; chaque forme fausse ou
+   manquée est **punie** (doublée pour les rejets obstinés). Le processus se
+   termine avec 100 % du matériel traité.
+3. **Poids entraînables (7)** — `param2`, `param1`, `dp`,
+   `gaussian_kernel_size`, `gaussian_sigma`, `occluded_ratio`,
+   `occluded_ring` : chacun a des deltas de récompense/punition, des bornes
+   minimales et maximales et un historique d'application.
+4. **Rapport final** — score de la détection, poids entraînés avec des
+   **infobulles ⓘ** expliquant chaque paramètre, et le bouton **Enregistrer**
+   exporte la configuration entraînée vers `trained_config.json` (dans le
+   dossier des échantillons), prête pour le système réel.
+
+### État
+
+- La progression est conservée dans `validator_state.json` (dans le dossier
+  des échantillons par défaut) : tours, séries, historique des
+  poids/deltas et l'IoU minimum actuel.
+- `--reset-state` efface tout (y compris l'historique) et repart ; seul, il
+  ouvre ensuite l'interface ; combiné à `--check`/`--auto`, il s'exécute sans
+  fenêtre.
+- `--state fichier.json` change l'emplacement de l'état ; `--export
+  sortie.json` change la destination du rapport enregistré.
 
 ## Ligne de commande
 
@@ -179,6 +245,10 @@ Les sous-commandes complètes (`astroframe --help`) :
 | `video` | Traite une vidéo (`--mode stabilize\|enhance\|stack`) |
 | `config-template` | Génère `config.yaml` avec les valeurs par défaut |
 | `calibrate` | Ouvre l'interface de calibration (`--samples dossier/`) |
+
+La validation/entraînement de la détection est un script séparé (voir
+[Validation et entraînement de la détection](#validation-et-entraînement-de-la-détection)) :
+`python validator.py [--check|--auto|--reset-state|--iou N]`.
 
 ### Photos en lot
 

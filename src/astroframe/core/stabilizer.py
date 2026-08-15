@@ -21,9 +21,23 @@ from astroframe.config import AstroFrameConfig
 logger = logging.getLogger(__name__)
 
 _MIN_DETECTABLE_DIM = 32
-_HALF_RES_THRESHOLD = 1200
-_MAX_DISKS = 5
+_HALF_RES_THRESHOLD = 1000
 _CROP_MARGIN = 6
+
+# Limites de raio/distância derivados da resolução do frame: sem valores fixos
+# em px (dependem de imagem para imagem), escalam com o menor lado.
+_MIN_RADIUS_RATIO = 0.02
+_MIN_DIST_RATIO = 0.1
+
+# Passe de sensibilidade: procura discos fracos/pequenos com um acumulador
+# mais permissivo; os falsos positivos extra são removidos pelos filtros
+# seguintes (_same_edge/_is_occluded_artifact/limite de discos).
+_SENSITIVITY_PARAM2_FACTOR = 0.6
+
+# Contraste mínimo do bordo interior (perfil radial) para aceitar um
+# companheiro concêntrico (Lua em eclipse total) — evita falsos positivos
+# com o limb darkening do Sol ou pontos brilhantes internos.
+_MIN_RING_CONTRAST = 25.0
 
 
 @dataclass(frozen=True)
@@ -33,11 +47,15 @@ class DiskDetection:
     `cx`/`cy` referem-se às coordenadas da imagem de origem; após a
     estabilização o disco fica no centro do frame e `radius` é ajustado
     ao eventual recorte/redimensionamento aplicado.
+
+    `ry` é o raio vertical para formas elípticas (ground truth manual da
+    calibração); `None` significa círculo (`radius` é o raio).
     """
 
     cx: int
     cy: int
     radius: int
+    ry: int | None = None
 
 
 def _intensity_centroid(gray: np.ndarray, cx: int, cy: int, radius: int) -> tuple[int, int]:
@@ -63,9 +81,32 @@ def _intensity_centroid(gray: np.ndarray, cx: int, cy: int, radius: int) -> tupl
 
 
 def _effective_radius_limits(height: int, width: int, cfg) -> tuple[int, int]:
-    """Raios Hough derivados da resolução do frame (evita limites fixos em px)."""
+    """Limites Hough derivados da resolução do frame.
+
+    O raio mínimo é ~2% do menor lado (nunca fixo em px — adapta-se à
+    imagem/frame); o máximo é o teto `cfg.max_radius`, com o menor lado como
+    limite absoluto. Calculados sobre as dimensões de trabalho (escala já
+    aplicada), eliminando mínimos desalinhados em meia-resolução.
+    """
     half = min(height, width) // 2
-    return min(cfg.min_radius, half), max(cfg.max_radius, half)
+    min_radius = max(2, int(min(height, width) * _MIN_RADIUS_RATIO))
+    return min_radius, max(cfg.max_radius, half)
+
+
+def _derived_min_dist(height: int, width: int) -> int:
+    """Distância mínima entre centros (~10% do menor lado, mínimo 60 px).
+
+    Grande de propósito: suprime o enxame de círculos concêntricos que o
+    Hough gera junto aos bordos do astro maior (centros quase coincidentes,
+    incluindo o "envelope" que envolve o Sol e os planetas colados a ele) e
+    impede que um deles se passe pelo disco principal com um raio inflado.
+
+    Discos realmente separados (planetas, ghosts, companheiros excêntricos)
+    têm centros mais afastados e não são afetados; a Lua em eclipse **total**
+    (centros coincidentes) é encontrada pelo passe concêntrico
+    (`_concentric_companion`), não pelo Hough.
+    """
+    return max(60, int(min(height, width) * _MIN_DIST_RATIO))
 
 
 def find_disk_center(image: np.ndarray, config: AstroFrameConfig | None = None) -> DiskDetection | None:
@@ -84,15 +125,18 @@ def find_all_disks(image: np.ndarray, config: AstroFrameConfig | None = None) ->
     O primeiro é o astro maior (Sol); os seguintes podem ser:
 
     - **companheiros de eclipse** — círculos interiores com raio próprio
-      (ex.: a Lua a entrar), detetados num segundo passe Hough com `minDist`
-      reduzido (a Lua não é concêntrica com o Sol, mas o centro cai dentro
-      do raio do Sol, que o `minDist` normal descartaria);
+      (ex.: a Lua a entrar); a distância mínima entre centros é derivada da
+      resolução (pequena), por isso não suprime círculos concêntricos;
+    - **planetas alinhados** — discos separados de tamanhos muito diferentes;
+      um passe de sensibilidade (acumulador mais permissivo) apanha os
+      pequenos/desbotados que o passe principal perde;
     - **reflexos da lente (ghosts)** — círculos afastados, normalmente mais
       pequenos (a UI desenha-os a vermelho e o polimento pode removê-los).
 
     Dedup: são fundidos apenas círculos do **mesmo bordo** (centros próximos
     E raios quase-iguais); círculos concêntricos de raios diferentes
-    (Sol + Lua) convivem na lista.
+    (Sol + Lua) convivem na lista. O número máximo de discos é
+    `cfg.max_disks` (omissão: 8).
     """
     config = config or AstroFrameConfig()
     cfg = config.stabilizer
@@ -109,11 +153,25 @@ def find_all_disks(image: np.ndarray, config: AstroFrameConfig | None = None) ->
 
     blurred = cv2.GaussianBlur(gray, (cfg.gaussian_kernel_size, cfg.gaussian_kernel_size), cfg.gaussian_sigma)
     min_radius, max_radius = _effective_radius_limits(*gray.shape[:2], cfg)
+    min_dist = _derived_min_dist(*gray.shape[:2])
+    detail_dist = max(25, min_dist // 4)
 
-    candidates = _hough_pass(blurred, cfg, cfg.min_dist, min_radius, max_radius, scale)
-    detail_dist = max(3, cfg.min_dist // 4)
-    if detail_dist < cfg.min_dist:
-        candidates += _hough_pass(blurred, cfg, detail_dist, min_radius, max_radius, scale)
+    main_candidates = _hough_pass(blurred, cfg, min_dist, min_radius, max_radius, scale)
+    extras: list[DiskDetection] = []
+    if detail_dist < min_dist:
+        extras += _hough_pass(blurred, cfg, detail_dist, min_radius, max_radius, scale)
+    if cfg.param2 > 1:
+        sensitivity = max(1, int(cfg.param2 * _SENSITIVITY_PARAM2_FACTOR))
+        if sensitivity < cfg.param2:
+            extras += _hough_pass(
+                blurred, cfg, min_dist, min_radius, max_radius, scale, param2_override=sensitivity
+            )
+    candidates = main_candidates + [
+        c
+        for c in extras
+        if not any(_same_center(c, m) for m in main_candidates)
+        and not any(_hugging_envelope(c, m) for m in main_candidates)
+    ]
 
     if cfg.contour_fallback:
         _, thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
@@ -134,44 +192,130 @@ def find_all_disks(image: np.ndarray, config: AstroFrameConfig | None = None) ->
     for disk in candidates:
         if any(_same_edge(disk, kept) for kept in unique):
             continue
-        if len(unique) >= _MAX_DISKS:
+        if any(_concentric_envelope(disk, kept) for kept in unique):
+            continue
+        if len(unique) >= cfg.max_disks:
             break
-        if any(_is_occluded_artifact(blurred, disk, kept, scale) for kept in unique):
+        if any(_is_occluded_artifact(blurred, disk, kept, scale, cfg) for kept in unique):
             continue
         unique.append(disk)
+
+    # Companheiro concêntrico (eclipse total): Hough suprime círculos com o
+    # mesmo centro, por isso só quando o disco primário é o único encontrado
+    # se procura a Lua no perfil radial do Sol.
+    if len(unique) == 1:
+        companion = _concentric_companion(blurred, unique[0], min_radius, cfg, scale)
+        if companion is not None:
+            if not any(_same_edge(companion, kept) for kept in unique) and not any(
+                _is_occluded_artifact(blurred, companion, kept, scale, cfg) for kept in unique
+            ):
+                unique.append(companion)
     return unique
 
 
 def _is_occluded_artifact(
-    gray: np.ndarray, candidate: DiskDetection, kept: DiskDetection, scale: float
+    gray: np.ndarray, candidate: DiskDetection, kept: DiskDetection, scale: float, cfg
 ) -> bool:
     """Candidato quase totalmente dentro de um disco já aceite (interior ao
     astro maior) que **não é um astro real**: um companheiro de eclipse (a
     Lua) é muito mais escuro que o anel à sua volta; um círculo deitado pelos
     dois bordos (Sol+Lua na mesma deteção) tem contraste fraco e é descartado.
 
+    `cfg.occluded_ring` é o raio do anel de comparação (× raio do candidato) e
+    `cfg.occluded_ratio` o limiar de brilho interior que decide artefacto —
+    ambos treináveis pela validação (nunca tamanhos/distâncias).
+
     A comparação usa a sobreposição de **área** (e não só o centro — o
     refinamento do centroide pode arrastar o centro de um objeto afastado
     para perto do astro maior).
+
+    `candidate`/`kept` estão em coordenadas da imagem de origem; `scale` é a
+    escala aplicada (0.5 em meia-resolução) e converte para a imagem de
+    trabalho onde `gray` foi calculado.
     """
     height, width = gray.shape[:2]
-    xs, ys = np.meshgrid(np.arange(width), np.arange(height))
-    r_c, r_k = candidate.radius / scale, kept.radius / scale
-    cx_c, cy_c = candidate.cx / scale, candidate.cy / scale
-    cx_k, cy_k = kept.cx / scale, kept.cy / scale
+    r_c, r_k = candidate.radius * scale, kept.radius * scale
+    cx_c, cy_c = candidate.cx * scale, candidate.cy * scale
+    cx_k, cy_k = kept.cx * scale, kept.cy * scale
     d = math.hypot(cx_c - cx_k, cy_c - cy_k)
     if d >= kept.radius:
         return False
-    in_candidate = np.hypot(xs - cx_c, ys - cy_c) <= r_c
-    if not in_candidate.any():
+    ring_r = cfg.occluded_ring * r_c
+    x0 = max(0, int(math.floor(cx_c - ring_r)))
+    x1 = min(width, int(math.ceil(cx_c + ring_r)))
+    y0 = max(0, int(math.floor(cy_c - ring_r)))
+    y1 = min(height, int(math.ceil(cy_c + ring_r)))
+    if x1 <= x0 or y1 <= y0:
         return False
-    inside_kept = np.hypot(xs - cx_k, ys - cy_k) <= r_k
-    if float(in_candidate[inside_kept].sum()) < 0.9 * float(in_candidate.sum()):
+    crop = gray[y0:y1, x0:x1]
+    ys, xs = np.ogrid[y0:y1, x0:x1]
+    dx_c, dy_c = xs - cx_c, ys - cy_c
+    r2_c = r_c * r_c
+    in_candidate = dx_c * dx_c + dy_c * dy_c <= r2_c
+    n_c = int(in_candidate.sum())
+    if n_c == 0:
         return False
-    ring = (~in_candidate) & (np.hypot(xs - cx_c, ys - cy_c) <= 1.25 * r_c)
-    inside_mean = float(gray[in_candidate].mean())
-    ring_mean = float(gray[ring].mean()) if ring.any() else 0.0
-    return ring_mean > 0 and inside_mean >= 0.75 * ring_mean
+    if d + r_c > r_k:
+        dx_k, dy_k = xs - cx_k, ys - cy_k
+        inside_kept = dx_k * dx_k + dy_k * dy_k <= r_k * r_k
+        if float(in_candidate[inside_kept].sum()) < 0.9 * n_c:
+            return False
+    ring = (~in_candidate) & (dx_c * dx_c + dy_c * dy_c <= ring_r * ring_r)
+    inside_mean = float(crop[in_candidate].mean())
+    ring_mean = float(crop[ring].mean()) if ring.any() else 0.0
+    return ring_mean > 0 and inside_mean >= cfg.occluded_ratio * ring_mean
+
+
+def _concentric_companion(
+    blurred: np.ndarray, primary: DiskDetection, min_radius: int, cfg, scale: float
+) -> DiskDetection | None:
+    """Companheiro concêntrico do disco primário (ex.: Lua em eclipse total
+    ou quase total, centro a poucos px do astro maior).
+
+    O Hough suprime círculos com o MESMO centro (ou centro mais próximo que
+    `min_dist`), por isso um disco interior centrado no Sol é invisível a
+    ele. Aqui o perfil radial médio (anéis de 4 px em torno do centro
+    primário) é calculado e procurada uma **depressão central escura**:
+
+    - o mínimo do perfil fica no interior (raios ≤ 60% do raio máximo);
+    - o centro é muito mais escuro que a região exterior (verdadeira
+      depressão, não um centro brilhante com mancha);
+    - o contraste é forte (`_MIN_RING_CONTRAST`).
+
+    O raio do companheiro é o bordo de subida após a depressão (para um
+    disco excentricamente centrado, a transição é suave e o bordo fica
+    próximo do raio real + excentricidade).
+
+    `primary` está em coordenadas da imagem de origem; `scale` converte para
+    a imagem de trabalho onde `blurred` foi calculado.
+    """
+    height, width = blurred.shape[:2]
+    cx, cy = primary.cx * scale, primary.cy * scale
+    r_prim = primary.radius * scale
+    r_max = int(min(r_prim - 3, cx, width - cx, cy, height - cy))
+    if r_max <= min_radius + 3:
+        return None
+    ys, xs = np.ogrid[:height, :width]
+    dist2 = (xs - cx) * (xs - cx) + (ys - cy) * (ys - cy)
+    radii = np.arange(min_radius, r_max + 1)
+    profile = np.array(
+        [
+            float(blurred[(dist2 >= (r - 2) * (r - 2)) & (dist2 < (r + 2) * (r + 2))].mean())
+            for r in radii
+        ]
+    )
+    i_min = int(np.argmin(profile))
+    if radii[i_min] > 0.6 * r_max:
+        return None
+    dark = profile[i_min]
+    bright = float(profile[-len(profile) // 5 :].mean())
+    if bright - dark < _MIN_RING_CONTRAST:
+        return None
+    if dark > 0.7 * bright:
+        return None
+    grad = profile[1:] - profile[:-1]
+    i = i_min + int(np.argmax(grad[i_min:]))
+    return DiskDetection(primary.cx, primary.cy, int(int(radii[i]) / scale))
 
 
 def _hough_pass(
@@ -181,16 +325,21 @@ def _hough_pass(
     min_radius: int,
     max_radius: int,
     scale: float,
+    param2_override: int | None = None,
 ) -> list[DiskDetection]:
-    """Um passe Hough com `minDist` próprio (o passe de detalhe usa um
-    `minDist` reduzido para encontrar círculos interiores ao astro maior)."""
+    """Um passe Hough com parâmetros próprios.
+
+    `param2_override` permite um passe de sensibilidade mais permissivo
+    (procura discos fracos sem alterar a configuração principal).
+    """
+    param2 = cfg.param2 if param2_override is None else param2_override
     circles = cv2.HoughCircles(
         blurred,
         cv2.HOUGH_GRADIENT,
         dp=cfg.dp,
         minDist=min_dist,
         param1=cfg.param1,
-        param2=cfg.param2,
+        param2=param2,
         minRadius=min_radius,
         maxRadius=max_radius,
     )
@@ -214,6 +363,39 @@ def _same_edge(candidate: DiskDetection, kept: DiskDetection) -> bool:
         math.hypot(candidate.cx - kept.cx, candidate.cy - kept.cy) <= tolerance
         and abs(candidate.radius - kept.radius) <= tolerance
     )
+
+
+def _same_center(candidate: DiskDetection, kept: DiskDetection) -> bool:
+    """Centros praticamente coincidentes (mesmo objeto, bordo possivelmente
+    diferente). Usado para não deixar os passos de detalhe/sensibilidade
+    voltarem a detetar o astro maior com um raio inflado (envelope)."""
+    return math.hypot(candidate.cx - kept.cx, candidate.cy - kept.cy) <= 8
+
+
+def _hugging_envelope(candidate: DiskDetection, kept: DiskDetection) -> bool:
+    """Candidato dos passos extra que "abraça" um disco do passe principal.
+
+    Após o refinamento do centroide, os envelopes (círculos que envolvem um
+    astro e os discos colados a ele) ficam com o centro a uma pequena fração
+    do próprio raio do disco principal e são visivelmente maiores — um
+    duplicado do mesmo objeto com raio inflado: descartado.
+    """
+    return math.hypot(candidate.cx - kept.cx, candidate.cy - kept.cy) <= 0.15 * candidate.radius and (
+        candidate.radius >= 1.12 * kept.radius
+    )
+
+
+def _concentric_envelope(candidate: DiskDetection, kept: DiskDetection) -> bool:
+    """Envelope concêntrico de um disco já aceite (mesmo centro, raio maior).
+
+    Nos passos adicionais (detalhe/sensibilidade) o Hough volta a detetar o
+    astro maior com um raio inflado — o círculo que envolve o disco e os
+    astros colados a ele. Centro quase idêntico + raio não menor que o do
+    aceite = duplicado do mesmo objeto com um raio pior: descartado.
+    """
+    if math.hypot(candidate.cx - kept.cx, candidate.cy - kept.cy) > 8:
+        return False
+    return candidate.radius >= 0.9 * kept.radius
 
 
 def _auto_crop(stabilized: np.ndarray, dx: int, dy: int, radius: int, cfg) -> tuple[np.ndarray, float]:

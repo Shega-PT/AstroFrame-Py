@@ -7,13 +7,14 @@ entrada por item de calibração:
 {"version": 1, "items": {
   "eclipse.jpg": {"path": "eclipse.jpg", "kind": "image", "frame": null,
                   "width": 1920, "height": 1080,
-                  "circles": [{"cx": 960, "cy": 540, "radius": 400}]}
+                  "circles": [{"cx": 960, "cy": 540, "radius": 400},
+                              {"cx": 200, "cy": 300, "radius": 80, "ry": 50}]}
 }}
 ```
 
 A chave é a `item_key` do `scan` (path relativo + `#frame` para vídeos), o que
 mantém o ground truth válido mesmo que a pasta de exemplos seja reorganizada
-por pastas.
+por pastas. `ry` é opcional e só aparece para elipses (ausente = círculo).
 """
 
 from __future__ import annotations
@@ -43,11 +44,16 @@ class CalibrationItem:
 
 
 def _circle_to_dict(circle: DiskDetection) -> dict:
-    return {"cx": circle.cx, "cy": circle.cy, "radius": circle.radius}
+    raw = {"cx": circle.cx, "cy": circle.cy, "radius": circle.radius}
+    if circle.ry is not None:
+        raw["ry"] = circle.ry
+    return raw
 
 
 def _circle_from_dict(raw: dict) -> DiskDetection:
-    return DiskDetection(int(raw["cx"]), int(raw["cy"]), int(raw["radius"]))
+    ry = raw.get("ry")
+    ry_int = int(ry) if ry is not None else None
+    return DiskDetection(int(raw["cx"]), int(raw["cy"]), int(raw["radius"]), ry_int)
 
 
 class CalibrationStore:

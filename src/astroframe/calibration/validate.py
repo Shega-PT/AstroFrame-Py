@@ -11,6 +11,8 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
+import numpy as np
+
 from astroframe.config import AstroFrameConfig
 from astroframe.core.stabilizer import DiskDetection
 
@@ -39,6 +41,58 @@ def circle_iou(a: DiskDetection, b: DiskDetection) -> float:
     return float(max(0.0, min(1.0, inter / union)))
 
 
+def _ellipse_mask(
+    cx: float, cy: float, rx: float, ry: float, width: int, height: int
+) -> np.ndarray:
+    """Máscara binária da elipse (ou círculo se `ry == rx`)."""
+    ys, xs = np.mgrid[0:height, 0:width].astype(np.float32)
+    dx, dy = xs - cx, ys - cy
+    rx, ry = max(rx, 1e-3), max(ry, 1e-3)
+    return ((dx / rx) ** 2 + (dy / ry) ** 2) <= 1.0
+
+
+def _shape_mask(
+    shape: DiskDetection, width: int, height: int, origin_x: float, origin_y: float
+) -> np.ndarray:
+    """Máscara da forma: elipse se `ry` presente, círculo caso contrário.
+
+    Desenha em coordenadas locais à grelha (`origin_x`/`origin_y` = canto
+    superior esquerdo da grelha na imagem).
+    """
+    if shape.ry is None:
+        return _ellipse_mask(
+            shape.cx - origin_x, shape.cy - origin_y, shape.radius, shape.radius, width, height
+        )
+    return _ellipse_mask(
+        shape.cx - origin_x, shape.cy - origin_y, shape.radius, shape.ry, width, height
+    )
+
+
+def shape_iou(a: DiskDetection, b: DiskDetection) -> float:
+    """IoU entre duas formas (0–1), por máscara quando alguma é elipse."""
+    if a.ry is None and b.ry is None:
+        return circle_iou(a, b)
+    rx = max(a.radius if a.ry is not None else a.radius, b.radius if b.ry is not None else b.radius)
+    ry = max(a.ry or a.radius, b.ry or b.radius)
+    x0 = min(a.cx, b.cx) - rx - 1
+    x1 = max(a.cx, b.cx) + rx + 1
+    y0 = min(a.cy, b.cy) - ry - 1
+    y1 = max(a.cy, b.cy) + ry + 1
+    width, height = int(x1 - x0), int(y1 - y0)
+    ma = _shape_mask(a, width, height, x0, y0)
+    mb = _shape_mask(b, width, height, x0, y0)
+    inter = float(np.count_nonzero(ma & mb))
+    union = float(np.count_nonzero(ma | mb))
+    return inter / union if union else 0.0
+
+
+def shape_mean_radius(shape: DiskDetection) -> float:
+    """Raio médio geométrico (raio único para círculos, sqrt(rx·ry) para elipses)."""
+    if shape.ry is None:
+        return float(shape.radius)
+    return float(math.sqrt(shape.radius * shape.ry))
+
+
 def match_circles(
     manual: list[DiskDetection],
     detected: list[DiskDetection],
@@ -51,7 +105,7 @@ def match_circles(
     scores: list[tuple[float, int, int]] = []
     for i, m in enumerate(manual):
         for j, d in enumerate(detected):
-            score = circle_iou(m, d)
+            score = shape_iou(m, d)
             if score >= iou_threshold:
                 scores.append((score, i, j))
     used_m: set[int] = set()
@@ -84,9 +138,14 @@ class ItemReport:
 def validate_item(label: str, manual: list[DiskDetection], detected: list[DiskDetection]) -> ItemReport:
     """Compara a deteção de uma amostra com o ground truth manual."""
     pairs, unmatched_m, unmatched_d = match_circles(manual, detected)
-    ious = [circle_iou(manual[i], detected[j]) for i, j in pairs]
+    ious = [shape_iou(manual[i], detected[j]) for i, j in pairs]
     centers = [math.hypot(manual[i].cx - detected[j].cx, manual[i].cy - detected[j].cy) for i, j in pairs]
-    radii = [(detected[j].radius - manual[i].radius) / manual[i].radius * 100.0 for i, j in pairs]
+    radii = [
+        (shape_mean_radius(detected[j]) - shape_mean_radius(manual[i]))
+        / shape_mean_radius(manual[i])
+        * 100.0
+        for i, j in pairs
+    ]
     return ItemReport(
         label=label,
         n_manual=len(manual),
@@ -161,15 +220,15 @@ def suggest_parameters(report: CalibrationReport, config: AstroFrameConfig | Non
         cfg = config.stabilizer
         suggestions.append(
             f"Há {report.total_false_negatives} disco(s) manual(is) não detetado(s): confirma se o astro "
-            f"entra no intervalo de raios [min_radius={cfg.min_radius}, max_radius={cfg.max_radius}] px "
-            f"e considera baixar `min_radius` (ou `param2`, atualmente {cfg.param2}, para detetar "
-            "bordos de contraste mais fraco)."
+            f"cabe dentro do teto de raio ({cfg.max_radius} px) e considera baixar `param2` "
+            f"(atualmente {cfg.param2}) — um acumulador mais permissivo apanha bordos de contraste "
+            "mais fraco (o raio mínimo e a distância mínima são derivados da resolução)."
         )
     if report.total_false_positives:
         cfg = config.stabilizer
         suggestions.append(
             f"Há {report.total_false_positives} deteção(ões) sem correspondência manual: considera subir "
-            f"`min_radius` ou `param2` (atualmente {cfg.param2}) para filtrar círculos falsos."
+            f"`param2` (atualmente {cfg.param2}) ou `param1` ({cfg.param1}) para filtrar círculos falsos."
         )
     if report.mean_radius_error_pct is not None and report.mean_radius_error_pct <= -10.0:
         suggestions.append(

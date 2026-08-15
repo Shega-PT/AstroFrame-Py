@@ -13,7 +13,8 @@ Geometric stabilization and automatic enhancement of solar and lunar eclipse pho
 - **Temporal anti-jitter** — centroid smoothing (EMA) and reuse of the last valid displacement when a frame has no detection.
 - **Multiple disk detection** — besides the main disk, the **reflections** are detected (Hough + contours); the polishing removes the reflections and the live video shows them in red.
 - **Polishing and automatic rating** — `polish_image()` adds brightness to the disk while keeping the corona; `score_image()` assigns **stars (0–5)** to the result (noise, contrast, size and corona color).
-- **Example-based calibration** — dedicated interface (`python calibrate.py`) that loads the photos and videos from `samples/`, allows **adjusting the circles by hand** (add, remove, move) and validates the automatic detection against the ground truth on all samples (recall, precision, IoU, errors + parameter suggestions).
+- **Example-based calibration** — native desktop interface (`python calibrate.py`) that loads the photos and videos from `samples/`, lets you **draw circles/ellipses by hand** (click creates, drag moves, handles resize) in a 1st pass, turn on the **automatic detection** in the 2nd to fill/validate the remaining samples, and compares everything against the ground truth on all samples (recall, precision, IoU, errors + parameter suggestions).
+- **Detection validation and training** — `validator.py` (native desktop window) walks the samples, shows the detection with zoom/pan, and learns by **rewarding and punishing 7 detector parameters** shape by shape against the manual guide; **automatic training** (`--auto`) re-detects in series until 100% and exports the **trained weights** for the real system.
 - **Feedback learning** — every run is stored in SQLite; besides the automatic rating, you can rate manually (0–5 stars) and AstroFrame **adjusts the sliders automatically** on the next run with the same camera profile, showing the history/log in the interface itself.
 - **Gradio interface** — two tabs: **Image** (Before/After, sliders, corona/limb zoom) and **Video** (live processing with detected disks, final preview at spaced frames and optional export). When loading a video, the **metadata** is read (ffprobe/OpenCV/EXIF) and the **parameters are suggested automatically** (ISO → denoising, resolution → detector radii, bitrate → compression), remaining editable.
 - **CLI** — photo batch, videos (stabilize/enhance/stack), logs and progress bar.
@@ -43,6 +44,7 @@ Simple alternative: `pip install -r requirements.txt`. Requires Python 3.10+.
 ```bash
 python main.py                             # web interface (Gradio) — frontend + backend together
 python calibrate.py                        # calibration interface (samples/)
+python validator.py                        # detection validation/training (samples/)
 astroframe serve                          # equivalent via the installed CLI
 astroframe process --input photo1.jpg photo2.jpg --output-dir outputs/
 astroframe video --input eclipse.mp4 --mode enhance
@@ -55,6 +57,12 @@ astroframe config-template                # generates an editable config.yaml
 the frontend in the browser and processes the images in the backend (the engine
 in `core/` runs in the same process, at each click on **Process**). Options:
 `--config`, `--host`, `--port`, `--share` and `--no-browser`.
+
+`validator.py` is the **detection validation/training** (native desktop window;
+`--check` for a report without the interface, `--auto` for automatic training):
+it compares the detection with the manual guide in `calibration.json`,
+**rewards/punishes the parameters** per shape and ends with a report + trained
+weights exportable to the real system.
 
 `calibrate.py` is the **calibration interface**: it loads images and video
 frames from `samples/`, lets you adjust the circles by hand (drag = move,

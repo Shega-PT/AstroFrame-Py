@@ -3,9 +3,10 @@
 Heurísticas documentadas (não são "ciência exata", apenas pontos de partida
 sensatos que depois podem ser ajustados pelo utilizador na interface):
 
-- **Resolução -> raios do estabilizador**: o disco ocupa tipicamente 15–45%
-  da dimensão mínima do frame; os limites do Hough são postos a essa escala
-  (em vez dos valores fixos por omissão).
+- **Resolução -> teto de raio do estabilizador**: o disco ocupa tipicamente
+  15–45% da dimensão mínima do frame; o teto do Hough é posto a essa escala
+  (em vez do valor fixo por omissão). O raio mínimo e a distância entre
+  centros são derivados automaticamente da resolução (sem valores em px).
 - **ISO -> denoising/nitidez**: ISO alto implica ruído mais forte; `denoise.h`
   sobe linearmente com o ISO (2 a 15) e a nitidez aumenta ligeiramente.
 - **Bitrate -> denoising**: vídeos com bitrate muito baixo (menos de ~0,1 bits
@@ -33,7 +34,6 @@ def suggest_config(meta: MediaMetadata) -> AstroFrameConfig:
 
     if meta.width and meta.height:
         half = min(meta.width, meta.height)
-        cfg.stabilizer.min_radius = int(_clamp(half * 0.08, 10, 200))
         cfg.stabilizer.max_radius = int(_clamp(half * 0.45, 50, 2000))
 
     if meta.iso:

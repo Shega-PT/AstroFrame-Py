@@ -32,7 +32,11 @@ def _circle_layer(shape: tuple[int, int], disk: DiskDetection) -> np.ndarray:
 
 def circles_to_layers(image: np.ndarray, circles: list[DiskDetection]) -> dict:
     """Valor do `gr.ImageEditor`: fundo (RGB) + uma camada RGBA por círculo."""
-    return {"background": np.asarray(image), "layers": [_circle_layer(image.shape[:2], d) for d in circles]}
+    return {
+        "background": np.asarray(image),
+        "layers": [_circle_layer(image.shape[:2], d) for d in circles],
+        "composite": None,
+    }
 
 
 def _layer_mask(layer: np.ndarray) -> np.ndarray:
