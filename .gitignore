@@ -11,10 +11,8 @@ venv/
 .coverage
 htmlcov/
 outputs/
-*.mp4
-*.MP4
-*.MOV
-*.mkv
+SDV_0233.MP4
 samples/calibration.json
 samples/validator_state.json
 samples/trained_config.json
+.ruff_cache/

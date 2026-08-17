@@ -121,7 +121,43 @@ def test_build_parser_tem_subcomandos():
     for action in parser._actions:
         if isinstance(action.choices, dict):
             names |= set(action.choices)
-    assert {"serve", "process", "video", "config-template", "calibrate"} <= names
+    assert {"serve", "process", "video", "config-template", "calibrate", "autotune"} <= names
+
+
+def _make_autotune_samples(root: Path) -> Path:
+    from astroframe.calibration.store import CalibrationItem, CalibrationStore
+    from astroframe.core.stabilizer import DiskDetection
+
+    samples = root / "samples"
+    samples.mkdir(parents=True, exist_ok=True)
+    store = CalibrationStore(samples / "calibration.json")
+    for i in range(2):
+        cv2.imwrite(str(samples / f"a{i}.jpg"), make_disk_image(height=200, width=200, radius=50)[0])
+        store.items[f"a{i}.jpg"] = CalibrationItem(
+            f"a{i}.jpg", "image", None, 200, 200, [DiskDetection(100, 100, 50)]
+        )
+    store.save()
+    return samples
+
+
+def test_main_autotune_exporta_config(tmp_path, monkeypatch):
+    samples = _make_autotune_samples(tmp_path)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    out = tmp_path / "tuned.json"
+    assert (
+        main(["autotune", "--samples", str(samples), "--budget", "0.3", "--seed", "7",
+              "--export", str(out)]) == 0
+    )
+    assert out.exists()
+
+
+def test_main_autotune_reset_e_perfil(tmp_path, monkeypatch):
+    samples = _make_autotune_samples(tmp_path)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    assert (
+        main(["autotune", "--samples", str(samples), "--budget", "0.2", "--reset",
+              "--profile", "cli-test", "--no-anneal"]) == 0
+    )
 
 
 def test_main_config_template(tmp_path):

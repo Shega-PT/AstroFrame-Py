@@ -11,9 +11,10 @@ référence du code dans [API.md](API.md).
 3. [Calibration](#calibration)
 4. [Validation et entraînement de la détection](#validation-et-entraînement-de-la-détection)
 5. [Ligne de commande](#ligne-de-commande)
-6. [Configuration (config.yaml)](#configuration-configyaml)
-7. [Workflow vidéo](#workflow-vidéo)
-8. [Limitations et remarques](#limitations-et-remarques)
+6. [Auto-réglage (IA)](#auto-réglage-ia)
+7. [Configuration (config.yaml)](#configuration-configyaml)
+8. [Workflow vidéo](#workflow-vidéo)
+9. [Limitations et remarques](#limitations-et-remarques)
 
 ---
 
@@ -58,7 +59,7 @@ astroframe serve --config config.yaml --port 7861 --share
 > `--share` crée une URL publique temporaire (via le tunnel Gradio) — ne
 > l'utilisez pas avec du matériel sensible.
 
-L'interface a deux onglets :
+L'interface a trois onglets :
 
 ### Onglet Image
 
@@ -108,6 +109,28 @@ L'interface a deux onglets :
    des étoiles au résultat vidéo ; l'ajustement s'applique aux prochains
    chargements du même type de vidéo et apparaît dans le journal
    d'apprentissage.
+
+### Onglet Auto-tune
+
+Optimise **tous les paramètres** de la pipeline contre les échantillons de
+`samples/` (détection vs. `calibration.json` + évaluation en étoiles) :
+
+- **Dossier d'échantillons** — dossier à scanner (`samples/` par défaut ;
+  il doit contenir `calibration.json` avec le ground truth).
+- **Budget (secondes)** — temps maximal de l'optimisation (5–300 s).
+- **Paramètres** — sous-ensemble à optimiser (vide = tous) ; les noms sont
+  les chemins du registre (ex. `clahe.clip_limit`, `denoise.h`).
+- **Recuit** — autorise l'acceptation de pires solutions pour échapper aux
+  minima locaux (recommandé).
+- **Enregistrer dans la base** — écrit le résultat dans la base
+  d'apprentissage (table `tuning`) : il sera **appliqué automatiquement** aux
+  prochains traitements du même profil par `apply_learned`.
+
+Cliquez sur **Optimiser** : la progression s'affiche (évaluation en ~480 p,
+mise en cache par paramètres effectifs), puis le **rapport** (paramètre ·
+base → ajusté · delta · pas ; objectif, étoiles, composante détection,
+nombre d'évaluations) et la **configuration résultante** (JSON). Le bouton
+**Effacer l'historique d'auto-réglage** vide la table `tuning` de la base.
 
 ### Base d'apprentissage (où c'est stocké)
 
@@ -243,6 +266,7 @@ Les sous-commandes complètes (`astroframe --help`) :
 | `serve` | Démarre l'interface Gradio |
 | `process` | Traite des photos en lot (`--input a.jpg b.jpg --output-dir dossier/`) |
 | `video` | Traite une vidéo (`--mode stabilize\|enhance\|stack`) |
+| `autotune` | Optimise tous les paramètres contre les échantillons (voir [Auto-réglage](#auto-réglage-ia)) |
 | `config-template` | Génère `config.yaml` avec les valeurs par défaut |
 | `calibrate` | Ouvre l'interface de calibration (`--samples dossier/`) |
 
@@ -278,6 +302,51 @@ astroframe video --input eclipse.mp4 --output sortie.mp4              # nom du f
   **centre chacune** et les combine (médiane par défaut) en un seul PNG.
 - `--fast` omet l'étape la plus lente (le débruitage) et réduit beaucoup le
   temps de traitement sur les grandes vidéos.
+
+## Auto-réglage (IA)
+
+L'auto-réglage optimise **tous les paramètres** de détection et
+d'amélioration contre les échantillons de `samples/`. Tout est **désactivé
+par défaut** (sections `[tuning]` et `[ai]` du config) et un modèle manquant
+ou corrompu dégrade silencieusement — l'IA ne bloque jamais le pipeline.
+
+```bash
+astroframe autotune --samples samples                       # optimisation complète (budget 60 s)
+astroframe autotune --samples samples --budget 120 --no-anneal
+astroframe autotune --samples samples --params clahe.clip_limit,denoise.h
+astroframe autotune --samples samples --profile teleobjectif --export ma-config.json
+astroframe autotune --samples samples --reset               # efface l'historique d'auto-réglage
+```
+
+| Option | Description |
+|---|---|
+| `--samples` | Dossier d'échantillons (défaut : `samples/`, avec `calibration.json`) |
+| `--budget` | Budget de temps en secondes (défaut : 60) |
+| `--seed` | Graine déterministe (défaut : 42) |
+| `--no-anneal` | Désactive le recuit (acceptation de pires solutions) — recherche plus conservatrice |
+| `--params` | Sous-ensemble de paramètres (ex. `clahe.clip_limit,denoise.h`) |
+| `--profile` | Profil d'apprentissage dans la base (défaut : `tuning`) |
+| `--export` | Fichier JSON de la configuration optimisée (défaut : `<samples>/trained_config.json`) |
+| `--reset` | Efface l'historique d'auto-réglage de la base avant d'optimiser |
+
+Comment ça marche :
+
+- **Évaluation par proxy** — chaque configuration est testée sur les
+  échantillons réduits (~480 p, échelle de travail maximale 0,5) : la
+  détection réelle est comparée au ground truth de `calibration.json`
+  (**IoU moyen** entre disques détectés et attendus, avec **pénalités pour
+  les disques en trop/manquants**) et les frames sont notées en étoiles. Les
+  résultats sont mis en cache par paramètres effectifs.
+- **Optimisation bornée** — montée de colline **déterministe** : momentum,
+  pas adaptatifs et recuit facultatif, toujours **dans les gammes sûres** du
+  registre des paramètres (`astroframe.ai.params`) ; jamais au-delà.
+- **Persistance** — le résultat atterrit dans la **base de feedback** (table
+  `tuning`) et est **appliqué automatiquement** aux exécutions suivantes du
+  même profil via `apply_learned`. Sans rien d'appris, la configuration reste
+  inchangée.
+- **Pré-seed LSTM** — si un modèle LSTM entraîné existe
+  (`~/.astroframe/lstm.npz`), ses prédictions initialisent la recherche quand
+  elles améliorent l'objectif du proxy.
 
 ## Configuration (config.yaml)
 
@@ -340,6 +409,26 @@ Tous les champs et types :
 | `user_weight` | float | `2.0` | Multiplicateur quand l'utilisateur évalue manuellement |
 | `history_limit` | int | `12` | Exécutions récentes considérées par profil |
 
+### `tuning` (auto-réglage)
+| Champ | Type | Défaut | Description |
+|---|---|---|---|
+| `enabled` | bool | `false` | Active l'auto-réglage (désactivé par défaut) |
+| `budget_s` | float | `60.0` | Budget de temps de l'optimisation (secondes) |
+| `seed` | int | `42` | Graine déterministe de la recherche |
+| `anneal` | bool | `true` | Accepte des pires solutions (recuit) pour échapper aux minima locaux |
+| `proxy_scale` | float | `0.5` | Échelle de travail maximale du proxy (~480 p au plafond) |
+| `frames_per_sample` | int | `3` | Frames notées en étoiles par échantillon dans le proxy |
+| `detection_weight` | float | `0.6` | Poids de la détection vs. étoiles dans l'objectif |
+| `params` | list\|null | `null` | Sous-ensemble de paramètres à optimiser (`null` = tous) |
+
+### `ai` (réseaux LSTM/CNN)
+| Champ | Type | Défaut | Description |
+|---|---|---|---|
+| `backend` | str | `numpy` | Implémentation des réseaux (NumPy toujours disponible ; `torch` = accélération facultative) |
+| `lstm_trajectory` | bool | `false` | Prédiction LSTM de la trajectoire du disque (anti-tremblement) |
+| `cnn_enhance` | bool | `false` | Étape résiduelle CNN à la fin de l'amélioration (post-unsharp) |
+| `disk_filter` | float | `0.0` | Seuil de confiance CNN pour filtrer les faux positifs de la détection (0 = désactivé) |
+
 ### `lucky`
 | Champ | Type | Défaut | Description |
 |---|---|---|---|
@@ -383,5 +472,9 @@ plantent jamais le démarrage.
 - **Frames sans disque** : `center_and_stabilize` retourne la frame inchangée
   (avec un avertissement) ; en vidéo, `AntiJitterStabilizer` réutilise le
   dernier déplacement valide.
+- **IA désactivée par défaut** : l'auto-réglage et les réseaux LSTM/CNN ne
+  s'activent qu'explicitement (`tuning.enabled=true`, `ai.*`) ; un modèle
+  manquant ou corrompu dégrade silencieusement, sans jamais bloquer le
+  pipeline.
 - **RIFE** (interpolation sur les sauts) est facultatif et exige PyTorch ; voir
   [API.md](API.md).

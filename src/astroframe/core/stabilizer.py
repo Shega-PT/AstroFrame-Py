@@ -39,6 +39,9 @@ _SENSITIVITY_PARAM2_FACTOR = 0.6
 # com o limb darkening do Sol ou pontos brilhantes internos.
 _MIN_RING_CONTRAST = 25.0
 
+# Cache do filtro CNN (carregado uma única vez; `None` = sem modelo).
+_disk_filter: object | None = None
+
 
 @dataclass(frozen=True)
 class DiskDetection:
@@ -210,6 +213,18 @@ def find_all_disks(image: np.ndarray, config: AstroFrameConfig | None = None) ->
                 _is_occluded_artifact(blurred, companion, kept, scale, cfg) for kept in unique
             ):
                 unique.append(companion)
+
+    # Filtro CNN (opcional): remove falsos positivos do Hough com confiança
+    # inferior ao limiar; **nunca** esvazia a lista quando havia deteções —
+    # a deteção nunca regride. Os patches são extraídos da imagem original
+    # (resolução total, não da cópia reduzida).
+    if config.ai.disk_filter > 0.0 and unique:
+        global _disk_filter
+        if _disk_filter is None:
+            from astroframe.ai.cnn import DiskFilter
+
+            _disk_filter = DiskFilter()
+        unique = _disk_filter.filter_disks(unique, image, config.ai.disk_filter)
     return unique
 
 
@@ -453,7 +468,9 @@ class AntiJitterStabilizer:
 
     Evita saltos frame-a-frame quando a deteção varia ligeiramente e mantém
     o último deslocamento válido quando um frame não tem disco detetado
-    (blur extremo, câmara em guinada rápida).
+    (blur extremo, câmara em guinada rápida). Com `ai.lstm_trajectory`
+    ativo, o centroide é **previsto** (extrapolação linear + refinamento
+    LSTM opcional) em vez de ficar congelado nos frames sem deteção.
     """
 
     def __init__(self, config: AstroFrameConfig | None = None, alpha: float | None = None):
@@ -463,6 +480,14 @@ class AntiJitterStabilizer:
         self._radius: int | None = None
         self._all_disks: list[DiskDetection] = []
         self._last_detection: DiskDetection | None = None
+        self._trajectory: object | None = None
+        if self.config.ai.lstm_trajectory:
+            try:
+                from astroframe.ai.lstm import TrajectoryPredictor
+
+                self._trajectory = TrajectoryPredictor(use_lstm=True)
+            except Exception:  # pragma: no cover - nunca bloqueia o runtime
+                self._trajectory = None
 
     @property
     def last_all_disks(self) -> list[DiskDetection]:
@@ -494,9 +519,15 @@ class AntiJitterStabilizer:
                 )
             self._radius = detection.radius
             self._last_detection = detection
+            if self._trajectory is not None:
+                self._trajectory.push(self._smooth[0], self._smooth[1])
         elif self._smooth is None:
             self._all_disks = []
             return frame, None
+        elif self._trajectory is not None and self._smooth is not None:
+            predicted = self._trajectory.predict()
+            if predicted is not None:
+                self._smooth = predicted
 
         if all_disks:
             self._all_disks = all_disks

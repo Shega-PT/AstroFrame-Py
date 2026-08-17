@@ -16,8 +16,16 @@ Geometric stabilization and automatic enhancement of solar and lunar eclipse pho
 - **Example-based calibration** — native desktop interface (`python calibrate.py`) that loads the photos and videos from `samples/`, lets you **draw circles/ellipses by hand** (click creates, drag moves, handles resize) in a 1st pass, turn on the **automatic detection** in the 2nd to fill/validate the remaining samples, and compares everything against the ground truth on all samples (recall, precision, IoU, errors + parameter suggestions).
 - **Detection validation and training** — `validator.py` (native desktop window) walks the samples, shows the detection with zoom/pan, and learns by **rewarding and punishing 7 detector parameters** shape by shape against the manual guide; **automatic training** (`--auto`) re-detects in series until 100% and exports the **trained weights** for the real system.
 - **Feedback learning** — every run is stored in SQLite; besides the automatic rating, you can rate manually (0–5 stars) and AstroFrame **adjusts the sliders automatically** on the next run with the same camera profile, showing the history/log in the interface itself.
-- **Gradio interface** — two tabs: **Image** (Before/After, sliders, corona/limb zoom) and **Video** (live processing with detected disks, final preview at spaced frames and optional export). When loading a video, the **metadata** is read (ffprobe/OpenCV/EXIF) and the **parameters are suggested automatically** (ISO → denoising, resolution → detector radii, bitrate → compression), remaining editable.
-- **CLI** — photo batch, videos (stabilize/enhance/stack), logs and progress bar.
+- **Gradio interface** — three tabs: **Image** (Before/After, sliders, corona/limb zoom), **Video** (live processing with detected disks, final preview at spaced frames and optional export) and **Auto-tune** (optimizes the parameters against the samples). When loading a video, the **metadata** is read (ffprobe/OpenCV/EXIF) and the **parameters are suggested automatically** (ISO → denoising, resolution → detector radii, bitrate → compression), remaining editable.
+- **Auto-tuning** — `astroframe autotune` (or the *Auto-tune* tab) searches all detection/enhancement parameters against the calibration samples (`samples/` + `calibration.json`): proxy evaluation at ~480p (mean IoU between detected and expected disks, with penalties for extra/missing disks) plus deterministic bounded hill climbing with time budget and annealing. The result is registered in the learning database and applied automatically to the next runs of the same profile.
+- **Small neural networks (pure NumPy)** — optional LSTM and CNN models: the LSTM learns from the rating history (predicting parameter deltas and the disk trajectory for the anti-jitter) and the CNN learns to remove noise/smearing (residual enhancer) and to score each detection (disk/noise classifier that filters false positives).
+- **CLI** — photo batch, videos (stabilize/enhance/stack), auto-tuning, logs and progress bar.
+
+> **AI at a glance (v0.7.0)** — the entire AI layer is **off by default**
+> (`[tuning]` and `[ai]`) and degrades silently: the auto-tuning needs a
+> folder of samples with ground truth, and the LSTM/CNN models (pure NumPy
+> core, PyTorch optional) live in `~/.astroframe/*.npz` — when a model is
+> missing or corrupt, the pipeline simply runs without it.
 
 ## Installation
 
@@ -50,6 +58,7 @@ astroframe process --input photo1.jpg photo2.jpg --output-dir outputs/
 astroframe video --input eclipse.mp4 --mode enhance
 astroframe video --input eclipse.mp4 --mode stack --stack-n 20
 astroframe video --input eclipse.mp4 --mode enhance --fast   # no denoise (faster)
+astroframe autotune --samples samples --budget 60            # auto-tunes the parameters (AI)
 astroframe config-template                # generates an editable config.yaml
 ```
 
@@ -89,7 +98,7 @@ detection with the ground truth on all samples.
 ## Development
 
 ```bash
-pytest                      # ~260 tests (pixel tests with synthetic images)
+pytest                      # 558 tests (pixel tests with synthetic images)
 pytest --cov=astroframe     # coverage (100% of the package)
 ruff check .                # lint
 ruff format .               # formatting
@@ -105,8 +114,8 @@ src/astroframe/
 ├── video/        frame reading, lucky imaging and stacking
 ├── meta/         metadata reading (ffprobe/OpenCV/EXIF) and parameter suggestions
 ├── calibration/  example scanning, ground truth and detection validation
-├── ui/           Gradio interface (Image/Video + Calibration) and CLI
-└── ai/           optional RIFE interpolation (requires PyTorch)
+├── ui/           Gradio interface (Image/Video/Auto-tune + Calibration) and CLI
+└── ai/           auto-tuning, LSTM/CNN learning, feedback, rating and optional RIFE
 ```
 
 ## License

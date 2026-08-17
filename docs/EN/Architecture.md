@@ -6,6 +6,9 @@ The system is divided into three main stages:
 - Automatic Image Enhancement,
 - Minimal Interface
 
+Since v0.7.0 there is also an **optional AI layer** (auto-tuning and small
+neural networks), described in [section 4](#4-ai-layer-auto-tuning-and-small-neural-networks).
+
 ---
 
 # 1 Video Tracking and Stabilization (Jitter Cancellation)
@@ -125,6 +128,119 @@ with gr.Blocks(title="Eclipse Auto-Enhancer") as demo:
 if __name__ == "__main__":
     demo.launch()
 ```
+
+---
+
+# 4 AI Layer (Auto-Tuning and Small Neural Networks)
+
+Introduced in v0.7.0. The pipeline parameters are no longer only manual:
+a deterministic optimizer searches them against the calibration samples, and
+small neural networks (pure NumPy — no new dependencies; PyTorch is optional)
+learn from the run history. **Everything is off by default**
+(`tuning.enabled=false`, `ai.*`) and degrades silently — a missing or corrupt
+model never blocks the pipeline.
+
+## 4.1 Registry of Tunable Parameters (`ai.params`)
+
+Single source of truth for the adjustable parameters of the pipeline
+(previously spread across `validator.py` and `feedback.py`). Each `ParamSpec`
+declares the safe range (`low`/`high`), the optimization step, the dtype
+(ints are rounded), the odd parity (Gaussian kernels must stay odd), the
+group (detect / geometry / enhance / stack / polish / score / meta), the
+evaluation cost (denoising is expensive) and the validator's reward/punish
+deltas. **Every learned value passes through `clamp_value`** — the clamps
+are always applied via the registry, so the training can never leave the
+safe ranges.
+
+## 4.2 Auto-Tuning (`ai.tuner`)
+
+Two pieces work together:
+
+- **Proxy evaluation** (`ProxyEval`) — the pipeline runs on the calibration
+  images (`samples/` + `calibration.json` ground truth) reduced to ~480p
+  (maximum work scale 0.5, never upscaled). The detection is compared with
+  the expected disks: **mean IoU** between detected (Hough) and ground-truth
+  disks, with **penalties for extra/missing disks**; a few enhanced frames
+  are also scored with stars. The reports are cached by the effective
+  parameter values, so the search only re-evaluates what changed.
+- **Bounded hill climbing** (`BoundedHillClimb`) — deterministic (fixed
+  seed) search with a **time budget**: per-parameter +step/−step passes,
+  momentum (the step doubles after 2 consecutive accepts in the same
+  direction, halves on failures, min step/8), optional **annealing**
+  (worse candidates accepted with probability exp(−Δ/T), T decaying per
+  pass — escapes local minima without leaving the safe ranges) and
+  patience. Costly parameters (denoising) are tried only on even passes.
+  The search can be **pre-seeded with LSTM predictions** when they improve
+  the proxy objective.
+
+The orchestration (`run_autotune`) evaluates, optimizes, exports the tuned
+configuration (`export_trained_config`, by default
+`samples/trained_config.json`) and **registers the result in the feedback
+DB** (`tuning` table). From then on, `apply_learned` applies those deltas
+automatically to every run of the same profile. Entry points: the CLI
+(`astroframe autotune`) and the *Auto-tune* tab of the Gradio interface.
+
+## 4.3 LSTM (`ai.lstm`)
+
+A single 1-layer LSTM cell implemented by hand in NumPy (forward + backward
+with backprop-through-time, vectorized — no torch dependency; `torch_available()`
+reports the optional PyTorch). Two applications:
+
+- **`LSTMTuner`** — trained offline on the feedback history (one run = one
+  timestep: star ratings + metrics; sliding windows, validation and early
+  stop) and predicts the **parameter deltas** of the next run. It pre-seeds
+  the auto-tuning, accelerating convergence. Without enough history it
+  returns `{}` and the search starts from the base.
+- **`TrajectoryPredictor`** — predicts the **next disk centroid** from the
+  last detections: linear regression (least squares) as the base, with an
+  optional LSTM refinement (cell 2→8, trained on synthetic trajectories by
+  `train_trajectory_model`). It integrates with the pipeline through the
+  `AntiJitterStabilizer` (`ai.lstm_trajectory`): in frames without
+  detection the centroid is **predicted** instead of frozen.
+
+Models are saved as versioned `.npz` files (`~/.astroframe/lstm.npz`); a
+corrupt or wrong-version file falls back silently.
+
+## 4.4 CNN (`ai.cnn`)
+
+A small convolutional network in pure NumPy (2× conv 3×3 + ReLU + pooling +
+MLP head) with two interchangeable heads, deterministic offline training
+(fixed seed) and gradients verified by finite differences:
+
+- **Residual enhancer** (`fit_residual` / `ResidualEnhancer`) — learns the
+  residual `r = y − x` from (input, target) pairs, i.e. the removal of
+  noise/smearing. Applied in the enhancement pipeline **after the unsharp
+  step** (`ai.cnn_enhance`): the residual is added to the L channel of LAB
+  in 64×64 tiles with overlap, preserving the colors. Without a model the
+  image comes out unchanged.
+- **Detection filter** (`fit_classifier` / `DiskFilter`) — a disk vs. noise
+  classifier that scores each detection (`confidence`, P(disk)). With
+  `ai.disk_filter > 0.0` the detection step drops candidates below the
+  threshold — filtering false positives of the Hough transform. It
+  **never empties** the detected list: the detection never regresses.
+
+Models: `~/.astroframe/enhancer_cnn.npz` and `~/.astroframe/disk_filter.npz`.
+
+## 4.5 Feedback Integration (`ai.feedback`)
+
+`apply_learned(cfg, profile, db)` sums two sources at the start of each run:
+
+- the **star-rating nudges** (the `runs` table, the 5 visual parameters);
+- the **auto-tuning deltas** (the `tuning` table, any registered parameter).
+
+Both are clamped through the `ai.params` registry. This is the AI "memory"
+across runs: with nothing learned, the configuration is returned unchanged.
+`ASTROFRAME_FEEDBACK_DB` overrides the database path
+(`~/.astroframe/feedback.db` by default).
+
+## 4.6 Security Model
+
+- All AI is **off by default** (`tuning.enabled=false`, `ai.lstm_trajectory`,
+  `ai.cnn_enhance`, `ai.disk_filter=0.0`).
+- A missing or corrupt model **degrades silently** (loads as `None`), and
+  the auto-tuning seed falls back to the base configuration.
+- The search never leaves the safe ranges of the registry, and the neural
+  networks never raise in runtime (no history → `None`/`{}`).
 
 ---
 

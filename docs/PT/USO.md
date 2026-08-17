@@ -10,10 +10,11 @@ em [API.md](API.md).
 2. [Interface web (Gradio)](#interface-web-gradio)
 3. [Calibração](#calibração)
 4. [Validação e treino da deteção](#validação-e-treino-da-deteção)
-5. [Linha de comando](#linha-de-comando)
-6. [Configuração (config.yaml)](#configuração-configyaml)
-7. [Workflow de vídeo](#workflow-de-vídeo)
-8. [Limitações e notas](#limitações-e-notas)
+5. [Auto-tuning (IA)](#auto-tuning-ia)
+6. [Linha de comando](#linha-de-comando)
+7. [Configuração (config.yaml)](#configuração-configyaml)
+8. [Workflow de vídeo](#workflow-de-vídeo)
+9. [Limitações e notas](#limitações-e-notas)
 
 ---
 
@@ -57,7 +58,7 @@ astroframe serve --config config.yaml --port 7861 --share
 > `--share` cria um URL público temporário (via túnel do Gradio) — não o use
 > com material sensível.
 
-A interface tem dois separadores:
+A interface tem três separadores:
 
 ### Separador Imagem
 
@@ -103,12 +104,36 @@ A interface tem dois separadores:
    estrelas ao resultado do vídeo; o ajuste é aplicado nos próximos carregamentos
    do mesmo tipo de vídeo e aparece no log de aprendizagem.
 
+### Separador Auto-tune
+
+Otimiza **todos os parâmetros da pipeline** contra a pasta de samples
+(`samples/` + ground truth `calibration.json`) — deteção (IoU contra o guia)
++ melhoria (estrelas) — com uma pesquisa determinística e com orçamento de
+tempo:
+
+- **Pasta de samples** — onde vive o material de calibração (por omissão
+  `samples`).
+- **Orçamento (segundos)** — tempo permitido para a otimização (por omissão
+  60).
+- **Parâmetros** — subconjunto de parâmetros ajustáveis (vazio = todos).
+- **Recozimento** — permite aceitar candidatos piores para escapar de mínimos
+  locais.
+- **Registar no banco de aprendizagem** — guarda o resultado na tabela
+  `tuning`, para ser aplicado automaticamente nas próximas execuções do mesmo
+  perfil (ver [Base de aprendizagem](#base-de-aprendizagem-onde-fica-guardado)).
+- **Otimizar** — mostra o progresso e depois o relatório (parâmetro · base →
+  ajustado · delta · passo, objetivo, estrelas, deteção, nº de avaliações e
+  tempo decorrido) mais a **configuração otimizada** em JSON.
+- **Limpar histórico de auto-tuning** — apaga o histórico `tuning` da base.
+
 ### Base de aprendizagem (onde fica guardado)
 
 As execuções (parâmetros usados, métricas e avaliações) ficam num ficheiro
 SQLite em `~/.astroframe/feedback.db`. Pode mudar o local com a variável de
 ambiente `ASTROFRAME_FEEDBACK_DB` (por exemplo, para partilhar a aprendizagem
-entre várias máquinas).
+entre várias máquinas). Os **resultados do auto-tuning** ficam na mesma base
+(tabela `tuning`) e são aplicados automaticamente às próximas execuções do
+mesmo perfil, juntamente com os ajustes por estrelas (`apply_learned`).
 
 ## Calibração
 
@@ -221,6 +246,59 @@ python validator.py --reset-state --check    # recomeça do zero e verifica
 - `--state ficheiro.json` muda o local do estado; `--export saida.json` muda o
   destino do relatório salvo.
 
+## Auto-tuning (IA)
+
+[v0.7.0] Otimiza automaticamente os **parâmetros de deteção/melhoria** contra
+o material de calibração. Precisa de uma pasta de samples com ground truth
+(`samples/` + `calibration.json`, ver [Calibração](#calibração)) — sem ele o
+proxy não consegue pontuar a deteção e o ajuste não tem com que comparar.
+
+```bash
+astroframe autotune --samples samples --budget 60
+astroframe autotune --samples samples --seed 42 --no-anneal \
+    --params param2,clip_limit,denoise.h
+astroframe autotune --samples samples --profile "video@5616x3744" --export tuned.json
+astroframe autotune --samples samples --reset       # limpa o histórico de tuning primeiro
+```
+
+| Opção | Descrição |
+|---|---|
+| `--samples DIR` | Pasta com as amostras e `calibration.json` (por omissão `samples`) |
+| `--budget N` | Orçamento de tempo do otimizador em segundos (por omissão 60) |
+| `--seed N` | Semente determinística (por omissão 42) |
+| `--no-anneal` | Desliga o recozimento (não aceita candidatos piores) |
+| `--params p1,p2` | Subconjunto de parâmetros ajustáveis (por omissão: todos os registados) |
+| `--profile NOME` | Perfil de câmara usado no banco de aprendizagem |
+| `--export FILE` | Exporta a configuração otimizada (por omissão `samples/trained_config.json`) |
+| `--reset` | Limpa o histórico de tuning do perfil antes de correr |
+| `--config FILE` | `config.yaml` base (a pesquisa parte dele) |
+
+### Como funciona
+
+1. **Avaliação por proxy** — cada configuração candidata corre a pipeline
+   sobre as amostras reduzidas a ~480p (escala de trabalho 0.5, nunca
+   ampliadas); a deteção é comparada com o ground truth (IoU médio entre
+   discos detetados e esperados, penalizações por discos extra/em falta) e
+   alguns frames melhorados são pontuados com estrelas. Os resultados ficam
+   em cache pelos parâmetros efetivos.
+2. **Pesquisa** — subida de colina em etapas: passes +passo/−passo por
+   parâmetro com momentum, redução do passo nas falhas e recozimento opcional
+   para escapar de mínimos locais; determinística (semente) e limitada ao
+   orçamento de tempo e aos intervalos seguros do registry de parâmetros.
+   Parâmetros caros (denoising) são tentados com menos frequência. A pesquisa
+   pode partir da previsão LSTM do histórico do perfil quando esta melhora o
+   objetivo.
+3. **Resultado** — os deltas ajustados são **registados no banco de
+   aprendizagem** (tabela `tuning`) e **aplicados automaticamente às próximas
+   execuções** do mesmo perfil (`apply_learned`, juntamente com os ajustes por
+   estrelas); a configuração otimizada é também exportada para o ficheiro
+   `--export` (JSON: parâmetros efetivos, deltas, relatório do proxy e secção
+   `stabilizer`).
+
+> Toda a IA está desligada por omissão — o auto-tuning só corre quando o
+> invocas (CLI ou separador *Auto-tune*); o resultado aprendido, no entanto,
+> continua a ser aplicado pelo `apply_learned` tal como as avaliações manuais.
+
 ## Linha de comando
 
 Os subcomandos completos (`astroframe --help`):
@@ -232,6 +310,7 @@ Os subcomandos completos (`astroframe --help`):
 | `video` | Processa um vídeo (`--mode stabilize\|enhance\|stack`) |
 | `config-template` | Gera `config.yaml` com os valores por omissão |
 | `calibrate` | Abre a interface de calibração (`--samples pasta/`) |
+| `autotune` | Auto-afina os parâmetros contra as amostras (`--samples pasta/`, `--budget N`, `--seed N`, `--no-anneal`, `--params p1,p2`, `--profile NOME`, `--export ficheiro`, `--reset`); ver [Auto-tuning (IA)](#auto-tuning-ia) |
 
 A validação/treino da deteção é um script à parte (ver
 [Validação e treino da deteção](#validação-e-treino-da-deteção)):
@@ -327,6 +406,26 @@ Todos os campos e tipos:
 | `user_weight` | float | `2.0` | Multiplicador quando o utilizador avalia manualmente |
 | `history_limit` | int | `12` | Execuções recentes consideradas por perfil |
 
+### `tuning` (auto-tuning)
+| Campo | Tipo | Padrão | Descrição |
+|---|---|---|---|
+| `enabled` | bool | `false` | Liga/desliga o auto-tuning (toda a IA está desligada por omissão) |
+| `budget_s` | float | `60.0` | Orçamento de tempo do otimizador (segundos) |
+| `seed` | int | `42` | Semente determinística da pesquisa |
+| `anneal` | bool | `true` | Aceita candidatos piores (recozimento) para escapar de mínimos locais |
+| `proxy_scale` | float | `0.5` | Escala de trabalho da avaliação por proxy (cap 480p, nunca amplia) |
+| `frames_per_sample` | int | `3` | Frames de vídeo por amostra pontuados com estrelas |
+| `detection_weight` | float | `0.6` | Peso da deteção vs. estrelas no objetivo |
+| `params` | list\|null | `null` | Subconjunto de parâmetros ajustáveis (`null` = todos os registados) |
+
+### `ai` (redes neuronais)
+| Campo | Tipo | Padrão | Descrição |
+|---|---|---|---|
+| `backend` | str | `numpy` | Backend de cálculo (`numpy` no núcleo; `torch` aceleração opcional) |
+| `lstm_trajectory` | bool | `false` | Prevê a trajetória do disco (anti-trepidação) com a LSTM |
+| `cnn_enhance` | bool | `false` | Passo residual CNN a seguir à máscara de nitidez (remoção de ruído/smearing) |
+| `disk_filter` | float | `0.0` | Limiar de confiança da CNN para filtrar deteções (0 = desligado; nunca esvazia a lista) |
+
 ### `lucky`
 | Campo | Tipo | Padrão | Descrição |
 |---|---|---|---|
@@ -365,5 +464,9 @@ Todos os campos e tipos:
   float32 em memória (aviso no log) — reduza `n_best` se exceder o necessário.
 - **Frames sem disco**: `center_and_stabilize` devolve o frame inalterado
   (com aviso); em vídeo, o `AntiJitterStabilizer` reaproveita o último
-  deslocamento válido.
+  deslocamento válido (ou usa a previsão de trajetória com `ai.lstm_trajectory`).
 - **RIFE** (interpolação em saltos) é opcional e exige PyTorch; ver [API.md](API.md).
+- **IA desligada por omissão** — `tuning.enabled`, `ai.lstm_trajectory`,
+  `ai.cnn_enhance` e `ai.disk_filter` só ativam o que está explícito; sem
+  modelos treinados em `~/.astroframe/` (`.npz` versionados) a pipeline
+  degrada silenciosamente e nunca bloqueia.

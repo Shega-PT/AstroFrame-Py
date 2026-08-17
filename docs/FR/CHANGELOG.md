@@ -6,6 +6,103 @@ fichier.
 Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et le
 versionnage [SemVer](https://semver.org/).
 
+## [0.7.0] - 2026-08-17
+
+### Ajouté
+
+- **Auto-réglage** (nouveau module `astroframe.ai.tuner`) — optimise **tous
+  les paramètres** de la pipeline contre les échantillons de `samples/` :
+  - `ProxyEval` — évaluation rapide sur ~480 p (échelle de travail maximale
+    0,5, jamais agrandie) : la détection réelle (Hough) est comparée au
+    ground truth de `calibration.json` (**IoU moyen** entre disques détectés
+    et attendus, avec **pénalités pour disques en trop/manquants**) et
+    jusqu'à 3 frames notées en étoiles ; résultats **mis en cache par hash
+    des paramètres effectifs** ;
+  - `BoundedHillClimb` — montée de colline **déterministe** (graine fixe) et
+    **bornée** : essais ±pas par paramètre, **momentum** (pas doublé après
+    deux acceptations consécutives), **pas adaptatifs** (moitié en cas
+    d'échec, plancher pas/8), **recuit facultatif** (acceptation de pires
+    solutions avec probabilité exp(−Δ/T), température décroissante),
+    patience (3 passes sans progrès) et **budget de temps** ; les paramètres
+    coûteux (débruitage) ne sont essayés qu'une passe sur deux ; jamais hors
+    des gammes sûres du registre ;
+  - `run_autotune` orchestre tout et **enregistre le résultat dans la base
+    d'apprentissage** (table `tuning` de la `FeedbackDB`, profil `tuning` par
+    défaut) — appliqué automatiquement aux exécutions suivantes du même
+    profil ; `export_trained_config` écrit la configuration optimisée (JSON
+    versionné, défaut : `<samples>/trained_config.json`) ;
+  - **pré-initialisation par les prédictions LSTM** du profil quand elles
+    améliorent l'objectif du proxy (`_lstm_seed`).
+- **Registre unifié des paramètres** (`astroframe.ai.params`) — source unique
+  des **gammes sûres**, pas et deltas de toute la pipeline (34 paramètres ;
+  les **17** des groupes détection + amélioration sont les cibles de
+  l'auto-réglage) : bornes, pas, dtype, **parité impaire** des kernels
+  gaussiens, coût d'évaluation et pénalités/récompenses du validator. Tout
+  valeur apprise passe par `clamp_value` — le validator, le feedback et le
+  tuner lisent le même registre et ne peuvent plus diverger.
+- **LSTM en NumPy pur** (`astroframe.ai.lstm`, sans dépendance ; PyTorch
+  facultatif via `torch_available()`) :
+  - `LSTMTuner` — s'entraîne sur l'historique de feedback (une exécution =
+    un pas de temps : notes par étoiles, 5 métriques, deltas) et **prédit le
+    vecteur de deltas** de la prochaine exécution (point de départ de
+    l'auto-réglage) ;
+  - `TrajectoryPredictor` — prédit la position du disque au frame suivant
+    pour l'anti-tremblement temporel : extrapolation linéaire (moindres
+    carrés) + **raffinement LSTM facultatif** (cellule 2→8, `use_lstm`),
+    entraîné hors ligne et de façon déterministe sur des **trajectoires
+    synthétiques** (`train_trajectory_model`) ;
+  - modèles `.npz` **versionnés** dans `~/.astroframe/lstm.npz` (fichier
+    corrompu ou mauvaise version → repli silencieux).
+- **CNN en NumPy pur** (`astroframe.ai.cnn`, im2col vectorisé, aucune
+  dépendance) — petit réseau convolutif (conv 2D 3×3, ReLU, pooling moyen
+  global, tête MLP), entraînement **hors ligne et déterministe** (graine
+  fixe) avec early-stop, **gradients vérifiés par différences finies** :
+  - `fit_residual` / `ResidualEnhancer` — modèle **résiduel** qui supprime
+    bruit/smearing (`r = y − x`), appliqué en étape **post-unsharp** de
+    `enhance_image` (`ai.cnn_enhance=true`) sur le canal **L du LAB** en
+    tuiles **64×64 avec chevauchement**, couleurs préservées ; sans modèle,
+    image intacte ;
+  - `fit_classifier` / `DiskFilter` — classifieur **disque/bruit** qui note
+    chaque candidat de `find_all_disks` (`confidence` = P(disque)) et peut
+    **filtrer les faux positifs** (`ai.disk_filter > 0.0`) sans jamais vider
+    la liste détectée ;
+  - modèles : `~/.astroframe/enhancer_cnn.npz` et
+    `~/.astroframe/disk_filter.npz`.
+- **Feedback enrichi** — la base SQLite gagne la table **`tuning`**
+  (`add_tuning`, `tuning_history`, `recent_tuning`, `reset_tuning`) ;
+  `apply_learned` **additionne désormais les nudges par étoiles et les deltas
+  d'auto-réglage**, toujours clamppés via le registre — la « mémoire » de
+  l'IA entre exécutions ; sans rien d'appris, la configuration est retournée
+  inchangée.
+- **CLI** — sous-commande `astroframe autotune` (`--samples`, `--budget`,
+  `--seed`, `--no-anneal`, `--params`, `--profile`, `--export`, `--reset` qui
+  efface l'historique d'auto-réglage de la base) avec rapport en fin de
+  recherche.
+- **Interface Gradio** — nouvel onglet **Auto-tune** : dossier d'échantillons,
+  budget en secondes, paramètres (multisélection), recuit, enregistrement
+  dans la base ; affiche la progression, le **rapport** et la **configuration
+  résultante**, avec un bouton pour effacer l'historique.
+- **Configuration** — nouvelles sections **`[tuning]**
+  (`enabled=false`, `budget_s=60.0`, `seed=42`, `anneal=true`,
+  `params=null`, `proxy_scale=0.5`, `frames_per_sample=3`,
+  `detection_weight=0.6`) et **`[ai]`** (`backend=numpy`,
+  `lstm_trajectory=false`, `cnn_enhance=false`, `disk_filter=0.0`).
+
+### Sécurité
+
+- **Toute l'IA est désactivée par défaut** (`tuning.enabled=false` et `ai.*`
+  à leurs valeurs par défaut) ; un modèle manquant ou corrompu **dégrade
+  silencieusement** (repli sur le comportement d'origine) et **ne bloque
+  jamais le pipeline**.
+
+### Documentation
+
+- Documentation française mise à jour : `docs/FR/API.md` (module
+  `astroframe.ai` complet : registre, tuner, LSTM, CNN, feedback enrichi),
+  `docs/FR/Architecture.md` (nouvelle section « Architecture IA »),
+  `docs/FR/Usage.md` (CLI `autotune`, onglet Auto-tune, sections `[tuning]`
+  et `[ai]`) et `README-FR.md` (fonctionnalités + paragraphe IA).
+
 ## [0.6.0] - 2026-08-14
 
 ### Ajouté

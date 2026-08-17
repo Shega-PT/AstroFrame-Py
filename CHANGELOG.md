@@ -5,6 +5,76 @@ Todas as mudanças notáveis do AstroFrame serão documentadas neste ficheiro.
 O formato segue [Keep a Changelog](https://keepachangelog.com/pt-PT/1.1.0/),
 e o versionamento [SemVer](https://semver.org/lang/pt-BR/).
 
+## [0.7.0] - 2026-08-17
+
+### Adicionado
+
+- **Auto-tuning de todos os parâmetros** (`src/astroframe/ai/tuner.py`) —
+  otimização automática dos parâmetros de deteção e melhoria contra o ground
+  truth de calibração:
+  - **avaliação por proxy** (`ProxyEval`) — corre a pipeline sobre as amostras
+    reduzidas a ~480p e pontua com IoU médio disco-a-disco (penalizações por
+    discos extra/em falta) + estrelas dos frames melhorados, com cache pelos
+    parâmetros efetivos;
+  - **pesquisa determinística** (`BoundedHillClimb`) — subida de colina em
+    etapas sobre o registry (momentum, redução do passo nas falhas, recozimento
+    opcional `exp(−Δ/T)`, orçamento de tempo e semente fixa);
+  - **pré-semente LSTM** (`_lstm_seed`) — a pesquisa pode partir da previsão
+    do `LSTMTuner` sobre o histórico do perfil quando esta melhora o objetivo;
+  - **CLI** `astroframe autotune` (`--samples/--budget/--seed/--no-anneal/
+    --params/--profile/--export/--reset`) e **separador Auto-tune** no Gradio
+    (progresso, relatório e configuração otimizada);
+  - o resultado é **registado no banco de aprendizagem** (tabela `tuning`) e
+    **aplicado automaticamente** às próximas execuções do mesmo perfil
+    (`apply_learned` soma os deltas com clamp do registry).
+- **Registry de parâmetros** (`src/astroframe/ai/params.py`) — fonte única de
+  verdade dos intervalos seguros, passos e deltas de treino (17 parâmetros em
+  `detect`/`enhance`/`stabilizer`); todo o valor aprendido passa por
+  `clamp_value` (clamp + arredondamento de ints + paridade ímpar).
+- **LSTM em NumPy puro** (`src/astroframe/ai/lstm.py`) — célula LSTM de uma
+  camada implementada à mão (forward/backward vetorizados, sem dependências
+  novas; torch é opcional):
+  - `LSTMTuner` treina offline sobre o histórico de feedback e prevê os deltas
+    dos 5 parâmetros visuais;
+  - `TrajectoryPredictor` prevê o centroide do disco (regressão linear +
+    refinamento LSTM opcional); integrado na anti-trepidação com
+    `ai.lstm_trajectory` — frames sem deteção usam a previsão em vez de
+    congelar o último deslocamento;
+  - modelos `.npz` versionados em `~/.astroframe/lstm.npz` (corrompidos →
+    fallback silencioso).
+- **CNN em NumPy puro** (`src/astroframe/ai/cnn.py`) — rede convolucional
+  pequena (2× conv 3×3 + ReLU + pooling + cabeça) com gradientes verificados
+  por diferenças finitas e treino offline determinístico:
+  - `fit_residual` + `ResidualEnhancer` — passo residual de remoção de
+    ruído/smearing após o unsharp (canal L do LAB, tiles 64×64 com overlap)
+    com `ai.cnn_enhance`;
+  - `fit_classifier` + `DiskFilter` — classificador disco/ruído que pontua
+    cada deteção; com `ai.disk_filter` (0–1) os candidatos abaixo do limiar
+    são descartados (a lista detetada nunca é esvaziada);
+  - modelos `~/.astroframe/enhancer_cnn.npz` e `~/.astroframe/disk_filter.npz`.
+- **Configuração nova** — `[tuning]` (`enabled=false`, `budget_s`, `seed`,
+  `anneal`, `proxy_scale`, `frames_per_sample`, `detection_weight`, `params`)
+  e `[ai]` (`backend="numpy"`, `lstm_trajectory=false`, `cnn_enhance=false`,
+  `disk_filter=0.0`).
+
+### Segurança
+
+- Toda a IA está **desligada por omissão** (`tuning.enabled=false`, `ai.*`);
+  modelos em falta/corrompidos degradam silenciosamente e nunca bloqueiam a
+  pipeline; todos os valores aprendidos passam pelo clamp do registry.
+
+### Testes
+
+- **558 testes, cobertura a 100%** de `src/astroframe/` — novos suítes para
+  `ai/params.py`, `ai/tuner.py`, `ai/lstm.py`, `ai/cnn.py` e testes de
+  cobertura dos ramos em falta (early-stop, fallbacks, integração Gradio/CLI);
+  `ruff check` limpo.
+
+### Documentação
+
+- Docs PT/EN/FR atualizadas: auto-tuning (CLI + separador), LSTM, CNN,
+  registry, configuração `[tuning]`/`[ai]` e segurança.
+
 ## [0.6.0] - 2026-08-14
 
 ### Adicionado

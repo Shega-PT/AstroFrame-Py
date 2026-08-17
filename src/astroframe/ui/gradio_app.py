@@ -28,6 +28,7 @@ import cv2
 import gradio as gr
 import numpy as np
 
+from astroframe.ai import params as ai_params
 from astroframe.ai.feedback import (
     FeedbackDB,
     apply_learned,
@@ -36,6 +37,7 @@ from astroframe.ai.feedback import (
     record_run,
 )
 from astroframe.ai.score import score_image, stars_text
+from astroframe.ai.tuner import run_autotune
 from astroframe.config import AstroFrameConfig
 from astroframe.core.enhancer import enhance_image
 from astroframe.core.pipeline import process_image
@@ -467,6 +469,33 @@ def manual_feedback(state: dict | None, stars_user: float, db: FeedbackDB | None
     return f"Guardado: {run.rationale}", _learning_log_html(state.get("profile"), db)
 
 
+def run_autotune_tab(
+    samples_dir: str,
+    budget: float,
+    params: str,
+    anneal: bool,
+    register: bool,
+    config: AstroFrameConfig | None = None,
+):
+    """Auto-tuning a partir do separador: otimiza contra `samples/` e devolve
+    o relatório + a configuração otimizada (editável no YAML/JSON exportado)."""
+    config = config or AstroFrameConfig()
+    if not samples_dir.strip():
+        yield "Indica a pasta de amostras (ex.: samples/).", None
+        return
+    yield "A otimizar… (avaliação em ~480p, cache por parâmetros efetivos)", None
+    db = _learning_db(config, None) if register else None
+    result = run_autotune(
+        samples_dir=samples_dir.strip(),
+        config=config,
+        budget_s=float(budget),
+        anneal=anneal,
+        params_filter=params.strip() or None,
+        db=db,
+    )
+    yield "\n".join(result.lines), result.config.to_dict()
+
+
 def build_app(config: AstroFrameConfig | None = None) -> gr.Blocks:
     config = config or AstroFrameConfig()
 
@@ -619,6 +648,41 @@ def build_app(config: AstroFrameConfig | None = None) -> gr.Blocks:
                     manual_feedback,
                     inputs=[video_run_state, v_stars_manual],
                     outputs=[v_feedback_msg, v_log_html],
+                )
+
+            with gr.Tab("Auto-tune"):
+                gr.Markdown(
+                    "Otimiza **todos os parâmetros** da pipeline contra as amostras de `samples/`: "
+                    "deteção (vs `calibration.json`) + melhoria (estrelas). A otimização é "
+                    "determinística (seed fixa), limitada às gamas seguras e registada no banco "
+                    "de aprendizagem (aplicada nas próximas execuções do mesmo perfil)."
+                )
+                with gr.Row():
+                    at_samples = gr.Textbox(value="samples", label="Pasta de amostras")
+                    at_budget = gr.Slider(
+                        5.0, 300.0, value=60.0, step=5.0, label="Orçamento (segundos)"
+                    )
+                    at_params = gr.Dropdown(
+                        choices=list(ai_params.PARAM_SPECS),
+                        multiselect=True,
+                        allow_custom_value=True,
+                        label="Parâmetros (vazio = todos)",
+                    )
+                    at_anneal = gr.Checkbox(True, label="Recozimento (escapar de mínimos locais)")
+                    at_register = gr.Checkbox(True, label="Registar no banco de aprendizagem")
+                with gr.Row():
+                    at_button = gr.Button("Otimizar", variant="primary")
+                    at_reset = gr.Button("Apagar histórico de auto-tuning", variant="secondary")
+                at_report = gr.Textbox(label="Relatório", interactive=False, lines=10)
+                at_config = gr.JSON(label="Configuração otimizada")
+                at_button.click(
+                    run_autotune_tab,
+                    inputs=[at_samples, at_budget, at_params, at_anneal, at_register],
+                    outputs=[at_report, at_config],
+                )
+                at_reset.click(
+                    lambda: f"Histórico de auto-tuning apagado ({FeedbackDB().reset_tuning()} registo(s)).",
+                    outputs=[at_report],
                 )
 
     return demo

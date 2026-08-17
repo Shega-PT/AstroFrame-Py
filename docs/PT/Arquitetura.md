@@ -140,3 +140,83 @@ Para estender este pipeline aos vídeos da Samsung Digital Camcorder com movimen
 2. Interpolação de Movimento Se Acontecerem "Saltos":
 
    - Se a câmara se mover muito rápido e perder alguns frames bons, você pode utilizar o modelo RIFE (Real-Time Intermediate Flow Estimation) via PyTorch para interpolar frames suavemente entre as correções manuais de elevação e direção.
+
+---
+
+# 4 Arquitetura de IA (v0.7.0)
+
+A camada de IA acrescenta auto-tuning e pequenas redes neuronais com um
+**núcleo NumPy puro** (PyTorch é opcional e nunca obrigatório). Tudo está
+**desligado por omissão** (`tuning.enabled=false`, `ai.*`); um modelo em
+falta ou corrompido degrada silenciosamente e nunca bloqueia a pipeline.
+
+## 4.1 Registry de parâmetros (`ai.params`)
+
+Fonte única de verdade dos intervalos seguros, passos e deltas de treino de
+todos os parâmetros ajustáveis (17 parâmetros em `detect`/`enhance`/
+`stabilizer`). Cada valor aprendido — do validator, do feedback por estrelas
+ou do auto-tuning — passa por `clamp_value`, que aplica o clamp, arredonda
+ints e força a paridade ímpar (kernels Gaussianos). A estabilidade do treino
+depende deste ponto nunca falhar.
+
+## 4.2 Auto-tuning (`ai.tuner`)
+
+- **Avaliação por proxy** (`ProxyEval`): corre a pipeline nas amostras de
+  calibração (`samples/` + `calibration.json`, ground truth desenhado à mão)
+  e mede o IoU médio entre discos detetados (Hough) e esperados, com
+  penalizações por discos extra/em falta; alguns frames melhorados são ainda
+  pontuados com estrelas (`ai.score`). Os frames são reduzidos a ~480p e os
+  relatórios ficam em cache pelos parâmetros efetivos.
+- **Pesquisa** (`BoundedHillClimb`): subida de colina determinística com
+  passes +passo/−passo sobre o registry, momentum (o passo duplica após 2
+  aceites na mesma direção), redução do passo nas falhas, recozimento
+  opcional (aceita piores com probabilidade `exp(−Δ/T)`) e orçamento de
+  tempo. Parâmetros caros (denoising) são tentados apenas em passes pares.
+- **Pré-semente LSTM** (`_lstm_seed`): antes da pesquisa, o histórico de
+  feedback do perfil é usado pelo `ai.lstm.LSTMTuner` para prever deltas;
+  só são mantidos se melhorarem o objetivo do proxy.
+- O resultado é registado na tabela `tuning` do banco de aprendizagem e
+  aplicado automaticamente nas execuções seguintes por `apply_learned` —
+  a "memória" da IA entre utilizações.
+
+## 4.3 LSTM (`ai.lstm`)
+
+Célula LSTM de uma camada implementada à mão em NumPy (backprop-through-time,
+portas i/f/o/g vetorizadas). Duas utilizações:
+
+- **`LSTMTuner`** — treinado offline sobre o histórico de feedback (9
+  características por execução, janelas deslizantes) para prever os deltas
+  dos 5 parâmetros visuais; usado como pré-semente do auto-tuning.
+- **`TrajectoryPredictor`** — prevê o centroide do disco no frame seguinte:
+  regressão linear (mínimos quadrados) como base e refinamento LSTM opcional
+  (célula 2→8 treinada em trajetórias sintéticas). Integrado no
+  `AntiJitterStabilizer`: com `ai.lstm_trajectory`, os frames sem deteção
+  usam a previsão em vez de congelar o último deslocamento.
+
+Os modelos são `.npz` versionados (`~/.astroframe/lstm.npz`); ficheiros
+corrompidos ou com versão errada carregam como `None` (fallback silencioso).
+
+## 4.4 CNN (`ai.cnn`)
+
+Rede convolucional pequena em NumPy puro (2× conv 3×3 + ReLU + pooling +
+cabeça), treino offline determinístico e gradientes verificados por
+diferenças finitas. Duas cabeças permutáveis:
+
+- **Residual** (`fit_residual` + `ResidualEnhancer`): aprende `r = y − x`
+  para remover ruído/smearing; aplicada por `enhance_image` a seguir ao
+  unsharp (canal L do LAB, tiles 64×64 com overlap) com `ai.cnn_enhance`.
+- **Classificador** (`fit_classifier` + `DiskFilter`): pontua cada deteção
+  com P(disco); `find_all_disks` descarta os candidatos abaixo de
+  `ai.disk_filter` (0–1) — a lista detetada **nunca** é esvaziada.
+
+Modelos: `~/.astroframe/enhancer_cnn.npz` e `~/.astroframe/disk_filter.npz`.
+
+## 4.5 Segurança e ciclo de vida
+
+1. Tudo desligado por omissão; cada componente decide por si se está
+   disponível (`available`/`torch_available`/`load()`).
+2. Modelos versionados; carga falhada → `None` → comportamento idêntico ao
+   modo sem IA.
+3. Todos os valores aprendidos passam pelo clamp do registry.
+4. A pipeline principal não depende de nenhum destes módulos: são camadas
+   opcionais por cima de `core/`.

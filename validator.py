@@ -55,15 +55,20 @@ import json
 import logging
 import math
 import queue
+import shutil
 import sys
 import threading
 import time
+import zlib
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import cv2
 import numpy as np
 
+from astroframe.ai import params as pparams
+from astroframe.ai.cnn import DiskFilter, SmallCNN, disk_patch, fit_classifier
+from astroframe.ai.feedback import FeedbackDB
 from astroframe.calibration.scan import SampleRef, load_frame, scan_samples
 from astroframe.calibration.store import CalibrationStore
 from astroframe.calibration.validate import CalibrationReport, shape_iou, validate_all, validate_item
@@ -94,60 +99,35 @@ else:
 # Parâmetros treináveis: apenas ajustes de acumulador (Hough), desfoque e
 # tolerância a discos ocultos — **nunca** tamanhos nem distâncias (o raio
 # mínimo e a distância entre centros são derivados da resolução da imagem,
-# sem valores em px treináveis).
-TRAINABLE_PARAMS = (
-    "param2",
-    "param1",
-    "dp",
-    "gaussian_kernel_size",
-    "gaussian_sigma",
-    "occluded_ratio",
-    "occluded_ring",
-)
+# sem valores em px treináveis). Os limites, passos e deltas vêm do registry
+# unificado (`astroframe.ai.params`) — fonte única de verdade do treino.
+TRAINABLE_PARAMS = tuple(spec.name for spec in pparams.specs("detect"))
 
 # Punição (forma rejeitada): apertar a deteção para o falso positivo
 # desaparecer. Recompensa (forma válida): relaxar um pouco (25%) para não
 # ficar demasiado estrito e deixar de detetar astros reais pequenos.
-PUNISH_DELTAS = {
-    "param2": 1.0,
-    "param1": 2.0,
-    "dp": 0.05,
-    "gaussian_kernel_size": 2.0,
-    "gaussian_sigma": 0.25,
-    "occluded_ratio": 0.01,
-    "occluded_ring": -0.05,
-}
-REWARD_DELTAS = {
-    "param2": -0.25,
-    "param1": -0.5,
-    "dp": -0.0125,
-    "gaussian_kernel_size": -0.5,
-    "gaussian_sigma": -0.0625,
-    "occluded_ratio": -0.005,
-    "occluded_ring": 0.025,
-}
+PUNISH_DELTAS = pparams.default_punish_deltas()
+REWARD_DELTAS = pparams.default_reward_deltas()
 
 # Gamas seguras dos parâmetros treináveis (o delta nunca sai destes limites).
 # `max_radius` não é treinado — só é limitado quando exportado.
-DELTA_BOUNDS = {
-    "param2": (1.0, 200.0),
-    "param1": (5.0, 500.0),
-    "dp": (0.5, 3.0),
-    "gaussian_kernel_size": (1.0, 31.0),
-    "gaussian_sigma": (0.5, 10.0),
-    "occluded_ratio": (0.5, 0.99),
-    "occluded_ring": (1.0, 2.0),
-    "max_radius": (50.0, 5000.0),
-}
-
-# Parâmetros de valor inteiro (os restantes são floats).
-_INT_PARAMS = ("param2", "param1", "gaussian_kernel_size", "max_radius")
+DELTA_BOUNDS = {spec.name: (spec.low, spec.high) for spec in pparams.specs("detect")}
+DELTA_BOUNDS["max_radius"] = (50.0, 5000.0)
 
 MAX_REEVALS_PER_SAMPLE = 12
 MAX_JUDGMENTS_PER_SAMPLE = 100
-STATE_VERSION = 1
+STATE_VERSION = 2
 DEFAULT_STATE_NAME = "validator_state.json"
 DEFAULT_EXPORT_NAME = "trained_config.json"
+
+# Rede neuronal da deteção (classificador disco/ruído) no treino automático:
+# os patches recolhidos (positivos = guia, negativos = falsos positivos +
+# recortes aleatórios) re-treina a CNN entre séries (warm-start do campeão);
+# os candidatos da deteção são filtrados por confiança durante o julgamento.
+CNN_THRESHOLD_DEFAULT = 0.5
+CNN_RANDOM_NEGATIVES_PER_SAMPLE = 4
+CNN_MODEL_DIR = Path("~/.astroframe/models").expanduser()
+CNN_CANONICAL_PATH = Path("~/.astroframe/disk_filter.npz").expanduser()
 
 # Treino automático: o mínimo de correspondência com o guia manual (IoU) é
 # sempre ≥ 0.90; a UI (e a CLI com `--iou`) pode aumentar o valor para subir
@@ -239,21 +219,14 @@ def effective_params(config: AstroFrameConfig, deltas: dict[str, float]) -> dict
 
     Os parâmetros inteiros são arredondados e o kernel do desfoque fica
     sempre ímpar; `max_radius` entra sem delta (apenas limitado à gama).
+    O clamp vem do registry unificado (`astroframe.ai.params`).
     """
     base = config.stabilizer
-
-    def clamp(key: str, base_value: float) -> int | float:
-        low, high = DELTA_BOUNDS[key]
-        value = min(high, max(low, base_value + deltas.get(key, 0.0)))
-        if key in _INT_PARAMS:
-            value = float(round(value))
-            if key == "gaussian_kernel_size" and int(value) % 2 == 0:
-                value = float(int(value) + 1)
-            return int(value)
-        return value
-
-    params = {key: clamp(key, float(getattr(base, key))) for key in TRAINABLE_PARAMS}
-    params["max_radius"] = clamp("max_radius", float(base.max_radius))
+    params: dict[str, int | float] = {}
+    for key in TRAINABLE_PARAMS:
+        spec = pparams.spec_by_name(key)
+        params[key] = pparams.clamp_value(spec.path, float(getattr(base, key)) + deltas.get(key, 0.0))
+    params["max_radius"] = pparams.clamp_value("stabilizer.max_radius", float(base.max_radius))
     return params
 
 
@@ -307,6 +280,9 @@ class ValidatorState:
         self.round = 0
         self.rounds: list[dict] = []
         self.weights: dict = self._default_weights()
+        self.cnn_positives = 0
+        self.cnn_negatives = 0
+        self.cnn_series: list[dict] = []
         self.load()
 
     @staticmethod
@@ -330,6 +306,9 @@ class ValidatorState:
         self.round = 0
         self.rounds = []
         self.weights = self._default_weights()
+        self.cnn_positives = 0
+        self.cnn_negatives = 0
+        self.cnn_series = []
         if not self.path.exists():
             return
         try:
@@ -337,7 +316,7 @@ class ValidatorState:
         except (ValueError, OSError) as exc:
             logger.warning("Estado de validação ilegível (%s), a começar vazio: %s", self.path, exc)
             return
-        if not isinstance(data, dict) or data.get("version") != STATE_VERSION:
+        if not isinstance(data, dict) or data.get("version") not in (1, STATE_VERSION):
             logger.warning("Estado de validação com versão desconhecida (%s), a começar vazio", self.path)
             return
         self.deltas = {k: float(v) for k, v in (data.get("deltas") or {}).items()}
@@ -345,6 +324,9 @@ class ValidatorState:
         self.punishments = int(data.get("punishments", 0))
         self.round = int(data.get("round", 0))
         self.rounds = list(data.get("rounds") or [])
+        self.cnn_positives = int(data.get("cnn_positives", 0))
+        self.cnn_negatives = int(data.get("cnn_negatives", 0))
+        self.cnn_series = list(data.get("cnn_series") or [])
         raw_weights = data.get("weights")
         if isinstance(raw_weights, dict):
             for kind, table in (("reward", self.weights["reward"]), ("punish", self.weights["punish"])):
@@ -374,6 +356,9 @@ class ValidatorState:
             "round": self.round,
             "rounds": self.rounds,
             "weights": self.weights,
+            "cnn_positives": self.cnn_positives,
+            "cnn_negatives": self.cnn_negatives,
+            "cnn_series": self.cnn_series,
             "samples": {
                 key: {
                     "accepted": [circle_to_dict(c) for c in record["accepted"]],
@@ -407,6 +392,9 @@ class ValidatorState:
         self.samples = {}
         self.round = 0
         self.rounds = []
+        self.cnn_positives = 0
+        self.cnn_negatives = 0
+        self.cnn_series = []
         self.save()
 
     def done_count(self, samples: list[SampleRef]) -> int:
@@ -703,6 +691,13 @@ def export_trained(
     """
     path = Path(path)
     params = effective_params(config, state.deltas)
+    full_deltas = {}
+    for key, value in state.deltas.items():
+        try:
+            full_deltas[pparams.spec_by_name(key).path] = value
+        except KeyError:
+            continue
+    effective = pparams.apply_deltas(config, full_deltas)
     data: dict = {
         "version": STATE_VERSION,
         "kind": "astroframe-trained",
@@ -711,6 +706,7 @@ def export_trained(
         "stats": {"rewards": state.rewards, "punishments": state.punishments},
         "deltas": dict(state.deltas),
         "stabilizer": params,
+        "params": {p: pparams.get_param(effective, p) for p in pparams.PARAM_SPECS},
     }
     if report is not None and report.score is not None:
         data["score"] = {
@@ -754,6 +750,8 @@ class AutoSeriesReport:
     report: CalibrationReport | None = None
     errors: list[str] = field(default_factory=list)
     stopped: bool = False
+    cnn_positives: int = 0
+    cnn_negatives: int = 0
 
 
 class AutoTrainer:
@@ -766,6 +764,12 @@ class AutoTrainer:
     O limiar começa no mínimo escolhido e sobe até `AUTO_IOU_END` conforme o
     número de validações acumuladas. Amostras sem guia são concluídas sem
     julgamentos (não há critério).
+
+    Com `collect_patches`, a série recolhe **patches para a CNN de deteção**:
+    positivos (círculos do guia) e negativos (formas rejeitadas + recortes
+    aleatórios que não tocam o guia). Com `cnn_model_path` (o campeão da
+    série anterior), os candidatos do Hough são filtrados por confiança da
+    CNN antes do julgamento — a lista detetada nunca é esvaziada.
     """
 
     def __init__(
@@ -775,6 +779,10 @@ class AutoTrainer:
         config: AstroFrameConfig,
         state: ValidatorState,
         iou_threshold: float = AUTO_IOU_MIN,
+        collect_patches: bool = True,
+        cnn_model_path: str | Path | None = None,
+        cnn_threshold: float = CNN_THRESHOLD_DEFAULT,
+        seed: int = 42,
     ):
         self.samples = samples
         self.store = store
@@ -785,6 +793,33 @@ class AutoTrainer:
         self.iou_start = self.iou_threshold
         self.iou_end = AUTO_IOU_MAX
         self.iou_rate = AUTO_IOU_RATE
+        self.collect_patches = collect_patches
+        self.cnn_threshold = float(cnn_threshold)
+        self.seed = int(seed)
+        self.positives: list[np.ndarray] = []
+        self.negatives: list[np.ndarray] = []
+        if collect_patches and cnn_model_path:
+            model = SmallCNN.load(cnn_model_path)
+            self._filter = DiskFilter(model=model) if model is not None else None
+        else:
+            self._filter = None
+
+    def _random_negatives(self, frame: np.ndarray, gt: list[DiskDetection], label: str) -> None:
+        """Recortes aleatórios determinísticos que não tocam o guia."""
+        h, w = frame.shape[:2]
+        if h < 32 or w < 32:
+            return
+        rng = np.random.default_rng(self.seed + zlib.crc32(label.encode("utf-8")))
+        max_r = max(8, min(h, w) // 12)
+        for _ in range(CNN_RANDOM_NEGATIVES_PER_SAMPLE):
+            radius = int(rng.integers(8, max_r + 1))
+            cx = int(rng.integers(radius, w - radius))
+            cy = int(rng.integers(radius, h - radius))
+            candidate = DiskDetection(cx, cy, radius)
+            iou = best_gt_iou(candidate, gt)
+            if iou is not None and iou >= 0.3:
+                continue
+            self.negatives.append(disk_patch(frame, cx, cy, radius))
 
     def run_series(
         self,
@@ -806,6 +841,8 @@ class AutoTrainer:
         done = 0
         stopped = False
         errors: list[str] = []
+        cnn_positives0 = len(self.positives)
+        cnn_negatives0 = len(self.negatives)
         for idx in range(len(self.samples)):
             if should_stop is not None and should_stop():
                 stopped = True
@@ -824,10 +861,19 @@ class AutoTrainer:
             except Exception as exc:
                 errors.append(f"{sample.label}: erro ao ler ({exc})")
                 continue
+            if self.collect_patches:
+                h, w = frame.shape[:2]
+                for circle in gt:
+                    if 0 <= circle.cx < w and 0 <= circle.cy < h and circle.radius > 0:
+                        self.positives.append(disk_patch(frame, circle.cx, circle.cy, circle.radius))
+                self._random_negatives(frame, gt, sample.label)
             detected = find_all_disks(frame, session.detect_config())
+            if self._filter is not None:
+                detected = self._filter.filter_disks(detected, frame, self.cnn_threshold)
             if on_detect is not None:
                 on_detect(frame, detected, sample.label, threshold)
             while True:
+                shape = session.current
                 action = session.apply_detection(detected)
                 if action == "present":
                     threshold = auto_iou_threshold(
@@ -837,11 +883,16 @@ class AutoTrainer:
                         self.iou_rate,
                     )
                     iou = best_gt_iou(session.current, gt)
-                    action = session.accept() if iou is not None and iou >= threshold else session.reject()
+                    rejected = iou is None or iou < threshold
+                    action = session.reject() if rejected else session.accept()
+                    if rejected and self.collect_patches and shape is not None:
+                        self.negatives.append(disk_patch(frame, shape.cx, shape.cy, shape.radius))
                     if action == "present":
                         continue
                 if action == "redetect":
                     detected = find_all_disks(frame, session.detect_config())
+                    if self._filter is not None:
+                        detected = self._filter.filter_disks(detected, frame, self.cnn_threshold)
                     if on_detect is not None:
                         on_detect(frame, detected, sample.label, threshold)
                     continue
@@ -861,7 +912,112 @@ class AutoTrainer:
             report=result[0] if result else None,
             errors=errors,
             stopped=stopped,
+            cnn_positives=len(self.positives) - cnn_positives0,
+            cnn_negatives=len(self.negatives) - cnn_negatives0,
         )
+
+
+# --------------------------------------------------------------------------
+# Rede neuronal da deteção (treino entre séries)
+# --------------------------------------------------------------------------
+
+
+def classifier_accuracy(
+    model: SmallCNN,
+    positives: list[np.ndarray],
+    negatives: list[np.ndarray],
+    seed: int,
+) -> float:
+    """Precisão do classificador numa divisão 80/20 determinística."""
+    X = np.concatenate([np.array(positives), np.array(negatives)], axis=0)
+    y = np.concatenate([np.ones(len(positives)), np.zeros(len(negatives))])
+    if len(X) == 0:
+        return 0.0
+    rng = np.random.default_rng(seed)
+    order = rng.permutation(len(X))
+    n_val = max(1, int(len(X) * 0.2))
+    val_idx = order[:n_val]
+    batch = np.stack([X[i] for i in val_idx])[:, None]
+    probs = model.predict_class(batch)
+    labels = y[val_idx].astype(int)
+    return float(np.mean((probs >= 0.5) == (labels == 1)))
+
+
+def train_classifier_round(
+    positives: list[np.ndarray],
+    negatives: list[np.ndarray],
+    state: ValidatorState,
+    round_n: int,
+    score: float | None,
+    epochs: int = 60,
+    champion_path: str | Path | None = None,
+    db: FeedbackDB | None = None,
+    seed: int = 42,
+) -> dict:
+    """Treina/continua o classificador CNN com os patches acumulados.
+
+    Warm-start a partir do campeão (`champion_path`) quando existe; o
+    candidato é guardado em staging (`~/.astroframe/models/`) e **comparado
+    com o melhor registado no banco** (`add_model`): se for melhor promove-o
+    (copia para o caminho canónico `~/.astroframe/disk_filter.npz`); se for
+    pior, a série seguinte parte dos pesos do campeão (warm-start). Sem
+    patches suficientes devolve `None` (o Hough segue como hoje).
+    """
+    if len(positives) < 2 or len(negatives) < 2:
+        if db is not None:
+            db.log("info", "validator", f"Série {round_n}: sem patches suficientes para a CNN")
+        return {"skipped": True}
+    warm = SmallCNN.load(champion_path) if champion_path else None
+    model, fit = fit_classifier(
+        positives, negatives, model=warm, epochs=epochs, seed=seed
+    )
+    accuracy = classifier_accuracy(model, positives, negatives, seed)
+    staged = CNN_MODEL_DIR / f"disk_filter_r{round_n}.npz"
+    staged.parent.mkdir(parents=True, exist_ok=True)
+    model.save(staged)
+    metrics = {
+        "score": float(score) if score is not None else 0.0,
+        "accuracy": accuracy,
+        "best_loss": float(fit.best_loss),
+    }
+    metric_name = "score" if score is not None else "accuracy"
+    db = db or FeedbackDB()
+    result = db.add_model(
+        "disk_filter",
+        staged,
+        metrics,
+        dataset_size=len(positives) + len(negatives),
+        source="validator-auto",
+        round=round_n,
+        metric_name=metric_name,
+    )
+    champion = result["champion"]
+    if result["promoted"]:
+        shutil.copyfile(staged, CNN_CANONICAL_PATH)
+        db.log("info", "validator", f"Série {round_n}: novo campeão CNN (score {score:.1f})", metrics)
+    else:
+        db.log(
+            "info",
+            "validator",
+            f"Série {round_n}: CNN pior que o campeão (score {score}); próxima série parte do campeão",
+            metrics,
+        )
+    record = {
+        "round": round_n,
+        "accuracy": accuracy,
+        "score": score,
+        "promoted": bool(result["promoted"]),
+        "dataset": len(positives) + len(negatives),
+    }
+    state.cnn_series.append(record)
+    state.save()
+    return {
+        "skipped": False,
+        "accuracy": accuracy,
+        "promoted": bool(result["promoted"]),
+        "staged": staged,
+        "champion_path": champion["path"] if champion else None,
+    }
 
 
 # --------------------------------------------------------------------------
@@ -1620,6 +1776,25 @@ class AutoTrainWindow:
         ).grid(row=row, column=0, sticky="w", pady=(0, 4))
         row += 1
 
+        cnn_row = ttk.Frame(panel)
+        cnn_row.grid(row=row, column=0, sticky="w", pady=(2, 0))
+        self.cnn_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            cnn_row,
+            text="Treinar CNN de deteção entre séries (filtra falsos positivos)",
+            variable=self.cnn_var,
+        ).pack(side=tk.LEFT)
+        cnn_hint = ttk.Label(cnn_row, text="ⓘ", foreground="#0a7", cursor="hand2")
+        cnn_hint.pack(side=tk.LEFT, padx=(4, 0))
+        Tooltip(
+            cnn_hint,
+            "Recolhe patches das séries (positivos = guia, negativos = falsos positivos "
+            "+ recortes aleatórios), re-treina o classificador entre séries e usa-o no "
+            "julgamento seguinte. O melhor resultado de cada treino é comparado com o "
+            "campeão registado: só é promovido se for estritamente melhor.",
+        )
+        row += 1
+
         self.series_label = ttk.Label(panel, text="", font=("", 10, "bold"))
         self.series_label.grid(row=row, column=0, sticky="w", pady=(8, 2))
         row += 1
@@ -1662,6 +1837,7 @@ class AutoTrainWindow:
         self.stop_btn.config(state=tk.NORMAL)
         series_total = int(self.series_var.get())
         iou_threshold = float(self.iou_var.get())
+        cnn_enabled = bool(self.cnn_var.get())
         self._report(f"Iniciando treino automático ({series_total} série(s))…\n")
         self.app.set_training_active(True)
         state = self.app.state
@@ -1669,6 +1845,9 @@ class AutoTrainWindow:
         store = self.app.store
         config = self.app.config
         messages = self._queue
+        positives: list[np.ndarray] = []
+        negatives: list[np.ndarray] = []
+        champion: dict = {"path": None}
 
         def work() -> None:
             try:
@@ -1678,7 +1857,13 @@ class AutoTrainWindow:
                         return
                     state.begin_round("auto")
                     trainer = AutoTrainer(
-                        samples, store, config, state, iou_threshold=iou_threshold
+                        samples,
+                        store,
+                        config,
+                        state,
+                        iou_threshold=iou_threshold,
+                        collect_patches=cnn_enabled,
+                        cnn_model_path=champion["path"] if cnn_enabled else None,
                     )
                     report = trainer.run_series(
                         progress=self._progress_msg,
@@ -1687,6 +1872,20 @@ class AutoTrainWindow:
                     )
                     state.end_round(metrics_from_report(report.report))
                     messages.put(("series_done", current, report))
+                    if cnn_enabled:
+                        positives.extend(trainer.positives)
+                        negatives.extend(trainer.negatives)
+                        score = report.report.score if report.report is not None else None
+                        result = train_classifier_round(
+                            positives, negatives, state, current, score,
+                            epochs=60, champion_path=champion["path"],
+                        )
+                        if result is not None and not result["skipped"]:
+                            if result["champion_path"] is not None:
+                                champion["path"] = result["champion_path"]
+                            messages.put(("cnn_done", current, result))
+                        else:
+                            messages.put(("cnn_done", current, {"skipped": True}))
                     if self._stop:
                         messages.put(("stopped", current, None))
                         return
@@ -1738,8 +1937,23 @@ class AutoTrainWindow:
                         f"Série {current}: {report.samples_done}/{report.samples_total}"
                         f" amostras · +{report.rewards} ✓ / {report.punishments} ✗"
                     )
+                    if report.cnn_positives or report.cnn_negatives:
+                        self._append_report(
+                            f"  patches CNN recolhidos: +{report.cnn_positives} ✓ / "
+                            f"{report.cnn_negatives} ✗"
+                        )
                     for error in report.errors:
                         self._append_report(f"  ! {error}")
+                elif kind == "cnn_done":
+                    _kind, current, result = message
+                    if result.get("skipped"):
+                        self._append_report(f"Série {current}: sem patches suficientes para treinar a CNN")
+                    else:
+                        self._append_report(
+                            f"Série {current}: CNN re-treinada — precisão "
+                            f"{100 * result['accuracy']:.1f}% "
+                            f"· {'PROMOVIDA (novo campeão)' if result['promoted'] else 'mantém o campeão'}"
+                        )
                 elif kind == "stopped":
                     self._finish("Treino interrompido (séries parciais concluídas).")
                     return
@@ -1769,6 +1983,18 @@ class AutoTrainWindow:
         if result is not None:
             _report, report_lines = result
             lines.extend(report_lines)
+        lines.append("")
+        if state.cnn_series:
+            lines.append(
+                f"CNN de deteção: {state.cnn_positives} positivos / {state.cnn_negatives} "
+                f"negativos recolhidos · {len(state.cnn_series)} treino(s) entre séries:"
+            )
+            for record in state.cnn_series:
+                promoted = "PROMOVIDA" if record["promoted"] else "mantém campeão"
+                lines.append(
+                    f"  série {record['round']}: precisão {100 * record['accuracy']:.1f}% "
+                    f"· {promoted}"
+                )
         lines.append("")
         lines.append(f"Config treinada exportada: {export_path}")
         self._report("\n".join(lines))
@@ -2148,10 +2374,16 @@ def run_auto_headless(
     series: int = 3,
     export_path: str | Path | None = None,
     iou: float | None = None,
+    epochs: int = 60,
+    cnn: bool = True,
+    cnn_threshold: float = CNN_THRESHOLD_DEFAULT,
 ) -> int:
     """`--auto`: N séries de treino automático sem interface, com exportação final.
 
-    Sem `iou` explícito usa o valor guardado no estado (pesos 'Salvar').
+    Entre séries, os patches recolhidos re-treiam a CNN de deteção
+    (warm-start do campeão); o candidato é comparado com o melhor registado
+    no banco e só é promovido se for estritamente melhor. Sem `iou` explícito
+    usa o valor guardado no estado (pesos 'Salvar').
     """
     config = AstroFrameConfig.from_yaml(config_path) if config_path else AstroFrameConfig()
     state = ValidatorState(state_path or Path(samples_dir) / DEFAULT_STATE_NAME)
@@ -2159,14 +2391,27 @@ def run_auto_headless(
     iou_threshold = iou if iou is not None else state_iou(state)
     samples = scan_samples(samples_dir)
     store = CalibrationStore(Path(samples_dir) / "calibration.json")
+    db = FeedbackDB()
 
     print(
         f"AstroFrame — treino automático ({len(samples)} amostras, {series} série(s), "
-        f"IoU mínimo {iou_threshold:.2f})"
+        f"IoU mínimo {iou_threshold:.2f}, CNN {'ligada' if cnn else 'desligada'})"
     )
+    positives: list[np.ndarray] = []
+    negatives: list[np.ndarray] = []
+    champion_path: str | Path | None = None
     for current in range(1, series + 1):
         state.begin_round("auto")
-        trainer = AutoTrainer(samples, store, config, state, iou_threshold=iou_threshold)
+        trainer = AutoTrainer(
+            samples,
+            store,
+            config,
+            state,
+            iou_threshold=iou_threshold,
+            collect_patches=cnn,
+            cnn_model_path=champion_path if cnn else None,
+            cnn_threshold=cnn_threshold,
+        )
         report = trainer.run_series(
             progress=lambda done, total, label, threshold: print(
                 f"  [{done}/{total}] {label} — IoU mínimo {threshold:.2f}"
@@ -2186,6 +2431,28 @@ def run_auto_headless(
                 f"Recall {report.report.recall * 100:.0f}% · "
                 f"Precisão {report.report.precision * 100:.0f}%"
             )
+        if cnn:
+            positives.extend(trainer.positives)
+            negatives.extend(trainer.negatives)
+            if report.cnn_positives or report.cnn_negatives:
+                print(
+                    f"  patches CNN recolhidos: +{report.cnn_positives} ✓ / "
+                    f"{report.cnn_negatives} ✗ (acumulado: {len(positives)} / {len(negatives)})"
+                )
+            score = report.report.score if report.report is not None else None
+            result = train_classifier_round(
+                positives, negatives, state, current, score,
+                epochs=epochs, champion_path=champion_path, db=db,
+            )
+            if result is not None and not result["skipped"]:
+                if result["champion_path"] is not None:
+                    champion_path = result["champion_path"]
+                print(
+                    f"  CNN: precisão {100 * result['accuracy']:.1f}% · "
+                    f"{'PROMOVIDA (novo campeão)' if result['promoted'] else 'mantém o campeão'}"
+                )
+            elif result is not None:
+                print("  CNN: sem patches suficientes para treinar")
 
     result = build_global_report(samples, store, state)
     final_report = result[0] if result else None
@@ -2255,6 +2522,23 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--epochs",
+        type=int,
+        default=60,
+        help="(auto) épocas de treino da CNN de deteção entre séries (omissão: 60)",
+    )
+    parser.add_argument(
+        "--cnn-off",
+        action="store_true",
+        help="(auto) desliga a CNN de deteção: só Hough + julgamento IoU, sem patches",
+    )
+    parser.add_argument(
+        "--cnn-threshold",
+        type=float,
+        default=CNN_THRESHOLD_DEFAULT,
+        help=f"(auto) confiança mínima da CNN para manter um candidato (omissão: {CNN_THRESHOLD_DEFAULT})",
+    )
+    parser.add_argument(
         "--export",
         default=None,
         help=(
@@ -2276,7 +2560,15 @@ def main(argv: list[str] | None = None) -> int:
             return run_check(args.samples, args.config, state_path)
         if args.auto:
             return run_auto_headless(
-                args.samples, args.config, state_path, args.series, args.export, args.iou
+                args.samples,
+                args.config,
+                state_path,
+                args.series,
+                args.export,
+                args.iou,
+                args.epochs,
+                not args.cnn_off,
+                args.cnn_threshold,
             )
         run(samples_dir=args.samples, config_path=args.config, state_path=state_path)
     except Exception:

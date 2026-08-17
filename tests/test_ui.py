@@ -25,6 +25,7 @@ from astroframe.ui.gradio_app import (
     process_image_input,
     process_video,
     run,
+    run_autotune_tab,
 )
 
 
@@ -451,6 +452,68 @@ def test_inspect_video_upload_aplica_aprendizagem(tmp_path, monkeypatch):
     record_run(db0, "video", profile, AstroFrameConfig(), {}, rating)
     html, raw, clip, denoise, unsharp, corona = inspect_video_upload(str(video))
     assert denoise["value"] == pytest.approx(5.3, abs=0.01)
+
+
+def test_inspect_video_upload_aplica_deltas_de_tuning(tmp_path, monkeypatch):
+    from astroframe.ai.feedback import FeedbackDB, profile_for
+
+    video = tmp_path / "clip.avi"
+    _write_video(video, [_make_disk_frame() for _ in range(3)])
+    monkeypatch.setattr("astroframe.meta.extractor._ffprobe", lambda path: None)
+    db_path = tmp_path / "fb.db"
+    monkeypatch.setenv("ASTROFRAME_FEEDBACK_DB", str(db_path))
+    db0 = FeedbackDB(db_path)
+    profile = profile_for("video", 80, 64)
+    db0.add_tuning(profile, {}, {"denoise.h": 1.0, "clahe.clip_limit": 0.4}, {})
+    html, raw, clip, denoise, unsharp, corona = inspect_video_upload(str(video))
+    assert clip["value"] == pytest.approx(3.4, abs=0.01)
+    assert denoise["value"] == pytest.approx(6.0, abs=0.01)
+
+
+def test_inspect_video_upload_sem_banco_aplica_por_omissao(tmp_path, monkeypatch):
+    video = tmp_path / "clip.avi"
+    _write_video(video, [_make_disk_frame() for _ in range(3)])
+    monkeypatch.setattr("astroframe.meta.extractor._ffprobe", lambda path: None)
+    cfg = AstroFrameConfig()
+    cfg.feedback.enabled = False
+    html, raw, clip, denoise, unsharp, corona = inspect_video_upload(str(video), config=cfg)
+    assert clip["value"] == 3.0
+    assert denoise["value"] == 5.0
+    assert unsharp["value"] == 0.5
+
+
+# ------------------------------------------------------- auto-tuning (UI) --
+
+
+def test_run_autotune_tab_sem_pasta():
+    gen = run_autotune_tab("", 10.0, "", True, False)
+    first = next(gen)
+    assert "Indica a pasta" in first[0]
+    with pytest.raises(StopIteration):
+        next(gen)
+
+
+def test_run_autotune_tab_completo(tmp_path):
+    from astroframe.calibration.store import CalibrationItem, CalibrationStore
+    from astroframe.core.stabilizer import DiskDetection
+
+    samples = tmp_path / "samples"
+    samples.mkdir(parents=True, exist_ok=True)
+    store = CalibrationStore(samples / "calibration.json")
+    for i in range(2):
+        frame = np.zeros((200, 200, 3), dtype=np.uint8)
+        cv2.circle(frame, (100, 100), 50, (200,) * 3, -1)
+        cv2.imwrite(str(samples / f"a{i}.jpg"), frame)
+        store.items[f"a{i}.jpg"] = CalibrationItem(
+            f"a{i}.jpg", "image", None, 200, 200, [DiskDetection(100, 100, 50)]
+        )
+    store.save()
+    gen = run_autotune_tab(str(samples), 0.3, "clip_limit", False, False)
+    first = next(gen)
+    assert "A otimizar" in first[0]
+    second = next(gen)
+    assert "Objetivo" in second[0]
+    assert isinstance(second[1], dict)
 
 
 # ---------------------------------------------------------------------------

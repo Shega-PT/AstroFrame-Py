@@ -11,6 +11,7 @@ import cv2
 from tqdm import tqdm
 
 from astroframe import __version__
+from astroframe.ai.tuner import DEFAULT_EXPORT_NAME, run_autotune
 from astroframe.config import AstroFrameConfig
 from astroframe.core.enhancer import enhance_image
 from astroframe.core.pipeline import process_path
@@ -116,6 +117,35 @@ def process_video(
     return out_path
 
 
+def _run_autotune_cli(args) -> None:
+    """Executa o auto-tuning a partir dos argumentos da CLI e imprime o relatório."""
+    from astroframe.ai.feedback import FeedbackDB
+
+    config = _load_config(args.config)
+    db = FeedbackDB()
+    if args.reset:
+        removed = db.reset_tuning()
+        print(f"Histórico de auto-tuning apagado ({removed} registo(s)).")
+    export = args.export or (Path(args.samples) / DEFAULT_EXPORT_NAME)
+    print(
+        f"AstroFrame — auto-tuning contra {args.samples} (orçamento {args.budget:g}s, "
+        f"seed {args.seed}, recozimento {'ligado' if args.anneal else 'desligado'})"
+    )
+    result = run_autotune(
+        samples_dir=args.samples,
+        config=config,
+        budget_s=args.budget,
+        seed=args.seed,
+        anneal=args.anneal,
+        params_filter=args.params,
+        export_path=export,
+        profile=args.profile,
+        db=db,
+    )
+    print("\n".join(result.lines))
+    print(f"Config otimizada exportada: {export}")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="astroframe",
@@ -162,6 +192,48 @@ def build_parser() -> argparse.ArgumentParser:
     calibrate.add_argument("--port", type=int, default=7860)
     calibrate.add_argument("--share", action="store_true", help="Gera um link público (Gradio share)")
 
+    autotune = sub.add_parser(
+        "autotune",
+        help="Otimiza todos os parâmetros da pipeline contra as amostras de samples/",
+    )
+    autotune.add_argument(
+        "--samples", default="samples", help="Pasta com as imagens/vídeos de exemplo"
+    )
+    autotune.add_argument("--config", default=None, help="Caminho para um config.yaml (base)")
+    autotune.add_argument(
+        "--budget",
+        type=float,
+        default=60.0,
+        help="Orçamento de tempo em segundos para a otimização (omissão: 60)",
+    )
+    autotune.add_argument("--seed", type=int, default=42, help="Semente determinística (omissão: 42)")
+    autotune.add_argument(
+        "--no-anneal",
+        action="store_false",
+        dest="anneal",
+        help="Desliga o recozimento (aceitar pioras) — busca mais conservadora",
+    )
+    autotune.add_argument(
+        "--params",
+        default=None,
+        help="Subconjunto de parâmetros a otimizar (ex.: 'clahe.clip_limit,denoise.h')",
+    )
+    autotune.add_argument(
+        "--profile",
+        default="tuning",
+        help="Perfil de aprendizagem no banco (omissão: 'tuning')",
+    )
+    autotune.add_argument(
+        "--export",
+        default=None,
+        help=f"Ficheiro JSON com a configuração otimizada (omissão: <samples>/{DEFAULT_EXPORT_NAME})",
+    )
+    autotune.add_argument(
+        "--reset",
+        action="store_true",
+        help="Apaga o histórico de auto-tuning do banco de aprendizagem antes de otimizar",
+    )
+
     return parser
 
 
@@ -197,6 +269,8 @@ def main(argv: list[str] | None = None) -> int:
                 port=args.port,
                 share=args.share,
             )
+        elif args.command == "autotune":
+            _run_autotune_cli(args)
     except Exception:
         logger.exception("Falha na execução")
         return 1

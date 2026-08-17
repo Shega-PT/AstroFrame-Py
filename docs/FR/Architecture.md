@@ -145,6 +145,132 @@ if __name__ == "__main__":
 
 ---
 
+# 4 Architecture IA (version 0.7.0)
+
+Depuis la version 0.7.0, la pipeline est augmentée par une couche d'IA
+légère — auto-réglage, LSTM et CNN — qui **ne remplace aucun composant
+existant** : elle ajuste des paramètres, filtre des détections et prédit des
+trajectoires, toujours dans les gammes sûres du registre. Le principe
+directeur est la **sécurité** : toute l'IA est désactivée par défaut, et un
+modèle manquant ou corrompu dégrade silencieusement sans jamais bloquer le
+pipeline.
+
+## 4.1 Registre unifié des paramètres (`ai.params`)
+
+Source unique de vérité des **gammes sûres**, pas d'optimisation et deltas
+d'apprentissage de toute la pipeline : 34 paramètres enregistrés (détection,
+géométrie, amélioration, stacking, polissage, évaluation, méta), chacun avec
+ses bornes, son pas, son type (entier/flottant), la **parité impaire** des
+kernels gaussiens, son coût d'évaluation (le débruitage est « coûteux ») et
+ses pénalités/récompenses du validator. Les 17 paramètres des groupes
+détection + amélioration sont les cibles de l'auto-réglage. **Tout valeur
+apprise passe par `clamp_value`** — l'apprentissage ne sort jamais des
+gammes sûres, les entiers sont arrondis et les kernels forcés impairs. Le
+validator, le feedback et le tuner lisent tous le même registre : ils ne
+peuvent plus diverger.
+
+## 4.2 Auto-réglage (`ai.tuner`)
+
+Deux briques, orchestrées par `run_autotune` :
+
+- **`ProxyEval`** — évaluation rapide d'une configuration sur les
+  échantillons de `samples/`. Chaque image/frame est réduite à ~480 p
+  (échelle de travail maximale 0,5, jamais agrandie) ; la détection réelle
+  (`find_all_disks`, Hough) est comparée au ground truth de
+  `calibration.json` : **IoU moyen** entre disques détectés et attendus,
+  avec pénalités pour les disques en trop/manquants (précision/rappel), et
+  jusqu'à 3 frames notées en étoiles. L'objectif pondère détection (0,6) et
+  étoiles (0,4). Les résultats sont **mis en cache par hash des paramètres
+  effectifs** : seul ce qui change est réévalué.
+- **`BoundedHillClimb`** — montée de colline **déterministe** (graine fixe)
+  et **bornée** : par passe et par paramètre, essai de +pas et −pas ; le
+  **momentum** double le pas après deux acceptations consécutives dans la même
+  direction, l'échec réduit le pas de moitié (plancher pas/8) ; le **recuit
+  facultatif** accepte des pires solutions avec probabilité exp(−Δ/T), la
+  température décroissant de 10 % par passe — échapper aux minima locaux sans
+  sortir des gammes sûres. La patience (3 passes sans progrès) et le **budget
+  de temps** (`budget_s`) bornent la recherche ; les paramètres coûteux
+  (débruitage) ne sont essayés qu'une passe sur deux.
+
+`run_autotune` pré-initialise la recherche avec les **prédictions LSTM** du
+profil quand elles améliorent l'objectif du proxy (`_lstm_seed`), enregistre
+le résultat dans la base d'apprentissage (table `tuning` de la `FeedbackDB`,
+par profil) et peut exporter la configuration optimisée (JSON versionné).
+Le résultat est ensuite **appliqué automatiquement** aux exécutions suivantes
+du même profil par `apply_learned` — c'est la « mémoire » de l'IA entre
+exécutions. Points d'entrée : CLI `astroframe autotune` et onglet
+**Auto-tune** de l'interface Gradio.
+
+## 4.3 LSTM (`ai.lstm`, NumPy pur)
+
+Une seule **cellule LSTM 1 couche** (portes i/f/o/g, forward + backward avec
+backprop-through-time) implémentée à la main en NumPy — sans dépendance ;
+PyTorch n'est qu'une accélération facultative (`torch_available()`). Deux
+usages :
+
+- **`LSTMTuner`** — s'entraîne sur l'historique de feedback (une exécution =
+  un pas de temps : notes par étoiles, 5 métriques visuelles, deltas) et
+  **prédit le vecteur de deltas** de la prochaine exécution. C'est le point
+  de départ de l'auto-réglage (`_lstm_seed`) : convergence plus rapide quand
+  le modèle a appris.
+- **`TrajectoryPredictor`** — prédit la position du disque au frame suivant
+  pour l'**anti-tremblement temporel** : extrapolation **linéaire** (moindres
+  carrés) sur l'historique récent des centroïdes, avec **raffinement LSTM
+  facultatif** (cellule 2→8) entraînée hors ligne sur des **trajectoires
+  synthétiques** (`train_trajectory_model`, déterministe). Activé par
+  `ai.lstm_trajectory`.
+
+Les modèles sont des `.npz` **versionnés** (`~/.astroframe/lstm.npz`) ; un
+fichier corrompu ou de mauvaise version retombe **silencieusement** sur la
+régression linéaire — le comportement d'origine.
+
+## 4.4 CNN (`ai.cnn`, NumPy pur)
+
+Petit réseau convolutif (conv 2D 3×3, ReLU, pooling moyen global, tête MLP),
+entraîné **hors ligne et de façon déterministe** (graine fixe, early-stop) ;
+les gradients sont vérifiés par **différences finies** dans les tests. Deux
+têtes sur un corps partagé :
+
+- **Résiduelle (`fit_residual` / `ResidualEnhancer`)** — apprend le résidu
+  `r = y − x` entre l'entrée et la cible propre (paires bruitées → propres) ;
+  il supprime bruit/smearing et s'applique en **étape post-unsharp** de
+  `enhance_image` (`ai.cnn_enhance=true`) : canal **L du LAB**, tuiles
+  **64×64 avec chevauchement**, couleurs préservées. Sans modèle → image
+  intacte.
+- **Classificatrice (`fit_classifier` / `DiskFilter`)** — apprend à
+  distinguer un **disque réel du bruit** (positifs : ground truth de
+  `calibration.json` ; négatifs : faux positifs) et note chaque candidat de
+  `find_all_disks` (`confidence` = P(disque)). `ai.disk_filter > 0.0`
+  filtre les candidats sous le seuil — et **ne vide jamais** la liste
+  détectée.
+
+Modèles : `~/.astroframe/enhancer_cnn.npz` et `~/.astroframe/disk_filter.npz`
+(versionnés ; corrompus → repli silencieux).
+
+## 4.5 Boucle de feedback et intégration dans la pipeline
+
+La base SQLite (`~/.astroframe/feedback.db`, surchargeable par
+`ASTROFRAME_FEEDBACK_DB`) contient deux tables : `runs` (exécutions,
+métriques, évaluations en étoiles) et `tuning` (auto-réglages par profil).
+Au démarrage de chaque exécution, `apply_learned` **additionne les nudges
+par étoiles et les deltas d'auto-réglage** du profil — toujours clamppés par
+le registre — ou retourne la configuration inchangée s'il n'y a rien
+d'appris.
+
+L'IA s'insère à trois points du pipeline existant :
+
+1. **Détection** — `DiskFilter` filtre les candidats de `find_all_disks`
+   (faux positifs) avant la stabilisation ;
+2. **Stabilisation** — `TrajectoryPredictor` fournit la position prédite du
+   disque aux frames sans détection (anti-tremblement) ;
+3. **Amélioration** — `ResidualEnhancer` ajoute son étape après l'unsharp ;
+   l'auto-réglage optimise l'ensemble des paramètres de ces étapes.
+
+Le flux reste identique sans IA : `find_all_disks` → `AntiJitterStabilizer`
+→ CLAHE → débruitage → unsharp → polissage → évaluation.
+
+---
+
 # Modules pour étendre la pipeline vidéo
 
 Pour étendre cette pipeline aux vidéos du caméscope numérique Samsung avec

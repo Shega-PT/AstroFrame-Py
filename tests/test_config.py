@@ -76,3 +76,50 @@ def test_yaml_invalido_avisa_mas_nao_crasha(tmp_path, yaml_text, key, caplog):
         cfg = AstroFrameConfig.from_yaml(path)
     assert any(key in record.getMessage() for record in caplog.records)
     assert isinstance(cfg, AstroFrameConfig)
+
+
+# ------------------------------------------------------------ tuning + AI --
+
+
+def test_tuning_config_por_omissao_desligado():
+    cfg = AstroFrameConfig()
+    assert cfg.tuning.enabled is False
+    assert cfg.tuning.budget_s == 60.0
+    assert cfg.tuning.seed == 42
+    assert cfg.tuning.anneal is True
+    assert cfg.tuning.params is None
+
+
+def test_ai_config_por_omissao_tudo_desligado():
+    cfg = AstroFrameConfig()
+    assert cfg.ai.backend == "numpy"
+    assert cfg.ai.lstm_trajectory is False
+    assert cfg.ai.cnn_enhance is False
+    assert cfg.ai.disk_filter == 0.0
+
+
+def test_yaml_round_trip_com_tuning_e_ai(tmp_path):
+    cfg = AstroFrameConfig()
+    cfg.tuning.budget_s = 12.5
+    cfg.tuning.params = ["clahe.clip_limit", "denoise.h"]
+    cfg.ai.lstm_trajectory = True
+    cfg.ai.disk_filter = 0.85
+    path = tmp_path / "config.yaml"
+    cfg.to_yaml(path)
+    loaded = AstroFrameConfig.from_yaml(path)
+    assert loaded.tuning.budget_s == pytest.approx(12.5)
+    assert loaded.tuning.params == ["clahe.clip_limit", "denoise.h"]
+    assert loaded.ai.lstm_trajectory is True
+    assert loaded.ai.disk_filter == pytest.approx(0.85)
+
+
+def test_override_parcial_de_tuning_e_ai(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "tuning:\n  budget_s: 30\nai:\n  cnn_enhance: true\n", encoding="utf-8"
+    )
+    loaded = AstroFrameConfig.from_yaml(path)
+    assert loaded.tuning.budget_s == pytest.approx(30.0)
+    assert loaded.tuning.enabled is False
+    assert loaded.ai.cnn_enhance is True
+    assert loaded.ai.lstm_trajectory is False

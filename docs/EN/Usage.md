@@ -10,10 +10,11 @@ in [API.md](API.md).
 2. [Web interface (Gradio)](#web-interface-gradio)
 3. [Calibration](#calibration)
 4. [Detection validation and training](#detection-validation-and-training)
-5. [Command line](#command-line)
-6. [Configuration (config.yaml)](#configuration-configyaml)
-7. [Video workflow](#video-workflow)
-8. [Limitations and notes](#limitations-and-notes)
+5. [Auto-tuning](#auto-tuning)
+6. [Command line](#command-line)
+7. [Configuration (config.yaml)](#configuration-configyaml)
+8. [Video workflow](#video-workflow)
+9. [Limitations and notes](#limitations-and-notes)
 
 ---
 
@@ -58,7 +59,7 @@ astroframe serve --config config.yaml --port 7861 --share
 > `--share` creates a temporary public URL (via the Gradio tunnel) — do not
 > use it with sensitive material.
 
-The interface has two tabs:
+The interface has three tabs:
 
 ### Image tab
 
@@ -104,12 +105,35 @@ The interface has two tabs:
    the adjustment applies to the next loads of the same type of video and
    appears in the learning log.
 
+### Auto-tune tab
+
+Optimizes **all pipeline parameters** against the samples folder
+(`samples/` + `calibration.json` ground truth) — detection (IoU against the
+guide) + enhancement (stars) — with a deterministic, time-budgeted search:
+
+- **Samples folder** — where the calibration material lives (default
+  `samples`).
+- **Budget (seconds)** — time allowed for the optimization (default 60).
+- **Parameters** — subset of tunable parameters (empty = all).
+- **Annealing** — allows accepting worse candidates to escape local minima.
+- **Register in the learning database** — stores the result in the `tuning`
+  table, so it is applied automatically in the next runs of the same
+  profile (see [Learning base](#learning-base-where-it-is-stored)).
+- **Optimize** — shows the progress and then the report (parameter · base →
+  adjusted · delta · step, objective, stars, detection, number of
+  evaluations and elapsed time) plus the **optimized configuration** as
+  JSON.
+- **Clear auto-tuning history** — wipes the `tuning` history of the
+  database.
+
 ### Learning base (where it is stored)
 
 The runs (parameters used, metrics and ratings) are stored in a SQLite file at
 `~/.astroframe/feedback.db`. You can change the location with the environment
 variable `ASTROFRAME_FEEDBACK_DB` (for example, to share the learning between
-several machines).
+several machines). The **auto-tuning results** are stored in the same database
+(`tuning` table) and applied automatically to the next runs of the same
+profile, together with the star-rating adjustments (`apply_learned`).
 
 ## Calibration
 
@@ -224,6 +248,58 @@ python validator.py --reset-state --check    # start over and verify
 - `--state file.json` changes the state location; `--export out.json` changes
   the destination of the saved report.
 
+## Auto-tuning
+
+[v0.7.0] Automatically optimizes the **detection/enhancement parameters**
+against the calibration material. It needs a samples folder with the ground
+truth (`samples/` + `calibration.json`, see
+[Calibration](#calibration)) — without it the proxy cannot score the
+detection and the tuning has nothing to compare against.
+
+```bash
+astroframe autotune --samples samples --budget 60
+astroframe autotune --samples samples --seed 42 --no-anneal \
+    --params param2,clip_limit,denoise.h
+astroframe autotune --samples samples --profile "video@5616x3744" --export tuned.json
+astroframe autotune --samples samples --reset       # clears the tuning history first
+```
+
+| Option | Description |
+|---|---|
+| `--samples DIR` | Folder with the samples and `calibration.json` (default `samples`) |
+| `--budget N` | Time budget of the optimizer in seconds (default 60) |
+| `--seed N` | Deterministic seed (default 42) |
+| `--no-anneal` | Disables the annealing (no accepting worse candidates) |
+| `--params p1,p2` | Subset of tunable parameters (default: all registered) |
+| `--profile NAME` | Camera profile used in the learning database |
+| `--export FILE` | Exports the optimized configuration (default `samples/trained_config.json`) |
+| `--reset` | Clears the profile's tuning history before running |
+| `--config FILE` | Base `config.yaml` (the search starts from it) |
+
+### How it works
+
+1. **Proxy evaluation** — each candidate configuration runs the pipeline on
+   the samples reduced to ~480p (work scale 0.5, never upscaled); the
+   detection is compared with the ground truth (mean IoU between detected and
+   expected disks, penalties for extra/missing disks) and a few enhanced
+   frames are scored with stars. Results are cached by the effective
+   parameters.
+2. **Search** — staged hill climbing: per-parameter +step/−step passes with
+   momentum, step reduction on failures and optional annealing to escape
+   local minima; deterministic (seed) and limited to a time budget and to the
+   safe ranges of the parameter registry. Costly parameters (denoising) are
+   tried less often. The search can start from the LSTM prediction of the
+   profile's history when it improves the objective.
+3. **Result** — the tuned deltas are **registered in the learning database**
+   (`tuning` table) and **applied automatically to the next runs** of the
+   same profile (`apply_learned`, along with the star-rating adjustments);
+   the optimized configuration is also exported to the `--export` file
+   (JSON: effective params, deltas, proxy report and `stabilizer` section).
+
+> All AI is off by default — the auto-tuning only runs when you invoke it
+> (CLI or the *Auto-tune* tab); the learned result, however, keeps being
+> applied by `apply_learned` like the manual ratings.
+
 ## Command line
 
 The complete subcommands (`astroframe --help`):
@@ -234,6 +310,7 @@ The complete subcommands (`astroframe --help`):
 | `process` | Processes photos in batch (`--input a.jpg b.jpg --output-dir folder/`) |
 | `video` | Processes a video (`--mode stabilize\|enhance\|stack`) |
 | `config-template` | Generates `config.yaml` with default values |
+| `autotune` | Auto-tunes the parameters against the samples (`--samples folder/`, `--budget N`, `--seed N`, `--no-anneal`, `--params p1,p2`, `--profile NAME`, `--export file`, `--reset`); see [Auto-tuning](#auto-tuning) |
 | `calibrate` | Opens the calibration interface (`--samples folder/`) |
 
 The detection validation/training is a standalone script (see [Detection
@@ -323,12 +400,32 @@ All fields and types:
 
 ### `feedback` (learning)
 | Field | Type | Default | Description |
-|---|---|---|---|
+|---|---|---|
 | `enabled` | bool | `true` | Stores ratings and applies the learned adjustment to the sliders |
 | `db_path` | str | `~/.astroframe/feedback.db` | SQLite database with the run history and adjustments |
 | `learning_rate` | float | `0.3` | Fraction of the delta applied per run |
 | `user_weight` | float | `2.0` | Multiplier when the user rates manually |
 | `history_limit` | int | `12` | Recent runs considered per profile |
+
+### `tuning` (auto-tuning)
+| Field | Type | Default | Description |
+|---|---|---|
+| `enabled` | bool | `false` | Turns the auto-tuning on/off (all AI is off by default) |
+| `budget_s` | float | `60.0` | Time budget of the optimizer (seconds) |
+| `seed` | int | `42` | Deterministic search seed |
+| `anneal` | bool | `true` | Accepts worse candidates (annealing) to escape local minima |
+| `proxy_scale` | float | `0.5` | Work scale of the proxy evaluation (480p cap, never upscaled) |
+| `frames_per_sample` | int | `3` | Video frames per sample scored with stars |
+| `detection_weight` | float | `0.6` | Weight of the detection vs. stars in the objective |
+| `params` | list\|null | `null` | Subset of tunable parameters (`null` = all registered) |
+
+### `ai` (neural networks)
+| Field | Type | Default | Description |
+|---|---|---|
+| `backend` | str | `numpy` | Computation backend (`numpy` core; `torch` optional acceleration) |
+| `lstm_trajectory` | bool | `false` | Predicts the disk trajectory (anti-jitter) with the LSTM |
+| `cnn_enhance` | bool | `false` | CNN residual step after the unsharp mask (noise/smearing removal) |
+| `disk_filter` | float | `0.0` | CNN confidence threshold to filter detections (0 = off; never empties the list) |
 
 ### `lucky`
 | Field | Type | Default | Description |
@@ -371,3 +468,6 @@ All fields and types:
   valid displacement.
 - **RIFE** (interpolation over jumps) is optional and requires PyTorch; see
   [API.md](API.md).
+- **AI is off by default** — the auto-tuning and the neural networks only
+  activate when configured (`tuning.enabled`, `ai.*`); a missing or corrupt
+  model in `~/.astroframe/` degrades silently and never blocks the pipeline.

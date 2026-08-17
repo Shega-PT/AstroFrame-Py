@@ -5,6 +5,98 @@ All notable changes to AstroFrame will be documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and versioning [SemVer](https://semver.org/).
 
+## [0.7.0] - 2026-08-17
+
+### Added
+
+- **Auto-tuning** (`astroframe/ai/tuner.py` + `astroframe/ai/params.py`):
+  - unified **registry of tunable parameters** (`ai.params`) — the single
+    source of truth for the safe ranges, optimization steps, dtype, odd
+    parity (Gaussian kernels), groups (detect/geometry/enhance/stack/
+    polish/score/meta), evaluation cost and validator reward/punish deltas;
+    **every learned value passes through the registry clamp**;
+  - **proxy evaluation** (`ProxyEval`): the pipeline runs on the calibration
+    samples (`samples/` + `calibration.json` ground truth) at ~480p
+    (`work_scale` 0.5, never upscaled), measuring the **mean IoU** between
+    detected (Hough) and expected disks with **penalties for extra/missing
+    disks**, plus star ratings of enhanced frames; cached by effective
+    parameters;
+  - **bounded hill climbing** (`BoundedHillClimb`): deterministic (fixed
+    seed), time-budgeted search (`budget_s`, default 60 s) with momentum
+    (step ×1.5 after two consecutive accepts, halved on failures, min
+    step/8), optional **annealing** (worse candidates accepted with
+    probability exp(−Δ/T), T decaying per pass) and patience; costly
+    parameters (denoising) tried only on even passes; can be **pre-seeded
+    with LSTM predictions** (`_lstm_seed`) when they improve the proxy;
+  - `run_autotune` orchestrates the optimization, exports the tuned
+    configuration (`export_trained_config`, default
+    `samples/trained_config.json`) and **registers the result in the
+    feedback DB** (`tuning` table) — applied automatically to the next runs
+    of the same profile via `apply_learned`.
+- **CLI `astroframe autotune`** — `--samples DIR`, `--budget N`, `--seed N`,
+  `--no-anneal`, `--params p1,p2`, `--profile NAME`, `--export FILE`,
+  `--config FILE` and `--reset` (clears the profile's tuning history).
+- **"Auto-tune" tab in the Gradio interface** — samples folder, time budget
+  (seconds), parameter subset (empty = all), annealing and DB registration
+  toggles; shows the progress, the report (parameter · base → adjusted ·
+  delta) and the optimized configuration as JSON; button to clear the
+  tuning history.
+- **LSTM (`astroframe/ai/lstm.py`, pure NumPy)** — one-layer LSTM cell with
+  hand-written forward/backward (backprop-through-time, vectorized, no new
+  dependencies; `torch_available()` reports the optional PyTorch):
+  - `LSTMTuner` — trains **offline** on the feedback history (star ratings +
+    metrics, sliding windows, validation and early stop) and predicts the
+    **parameter deltas** for the next run; used as the auto-tuning pre-seed;
+  - `TrajectoryPredictor` — predicts the **next disk centroid** (linear
+    regression as the base + optional LSTM refinement, cell 2→8, trained on
+    synthetic trajectories by `train_trajectory_model`); with
+    `ai.lstm_trajectory` the anti-jitter **predicts** the centroid instead
+    of freezing it in frames without detection;
+  - models saved as **versioned `.npz`** (`~/.astroframe/lstm.npz`); a
+    corrupt or wrong-version file falls back silently.
+- **CNN (`astroframe/ai/cnn.py`, pure NumPy)** — small convolutional network
+  (2× conv 3×3 + ReLU + pooling + MLP head), gradients verified by **finite
+  differences**, offline deterministic training (fixed seed):
+  - `fit_residual` / `ResidualEnhancer` — learns to remove noise/smearing;
+    applied **after the unsharp step** of `enhance_image` (L channel of LAB,
+    64×64 tiles with overlap) when `ai.cnn_enhance`;
+    `~/.astroframe/enhancer_cnn.npz`;
+  - `fit_classifier` / `DiskFilter` — disk vs. noise classifier scoring each
+    detection (`confidence`); filters false positives when
+    `ai.disk_filter > 0.0` and **never empties** the detected list;
+    `~/.astroframe/disk_filter.npz`.
+- **New configuration sections** — `[tuning]` (`enabled=false`,
+  `budget_s=60.0`, `seed=42`, `anneal=true`, `proxy_scale=0.5`,
+  `frames_per_sample=3`, `detection_weight=0.6`, `params=null`) and `[ai]`
+  (`backend=numpy`, `lstm_trajectory=false`, `cnn_enhance=false`,
+  `disk_filter=0.0`).
+- **Feedback integration** — `apply_learned` now also sums the auto-tuning
+  deltas (`tuning` table) over the star-rating nudges, always clamped via
+  the registry: the AI "memory" across runs (with nothing learned the
+  configuration returns unchanged).
+- **Security**: all AI is **off by default** (`tuning.enabled=false`,
+  `ai.*`); a missing or corrupt model degrades silently and never blocks the
+  pipeline.
+
+### Tests
+
+- New test modules `tests/test_params.py`, `tests/test_tuner.py`,
+  `tests/test_lstm.py`, `tests/test_cnn.py` and `tests/test_ai_coverage.py`
+  (proxy with synthetic samples, deterministic hill climbing, finite
+  differences on the CNN gradients, silent fallbacks); suite expanded with
+  100% package coverage.
+
+### Documentation
+
+- `docs/EN/API.md` — new sections `ai.params`, `ai.tuner`, `ai.lstm` and
+  `ai.cnn`; updated `ai.feedback` (tuning table, `apply_learned`),
+  `ui.gradio_app` (Auto-tune tab), `ui.cli` (autotune) and `core` hooks.
+- `docs/EN/Architecture.md` — new section *4 AI Layer* (registry, proxy +
+  hill climbing, LSTM, CNN, feedback integration, security model).
+- `docs/EN/Usage.md` — Auto-tuning section (CLI + how it works), Auto-tune
+  tab, `[tuning]`/`[ai]` configuration tables and security note.
+- `README-EN.md` — new features and the AI-at-a-glance paragraph.
+
 ## [0.6.0] - 2026-08-14
 
 ### Added

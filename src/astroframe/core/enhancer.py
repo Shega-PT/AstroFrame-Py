@@ -51,6 +51,24 @@ def _as_bgr(image: np.ndarray) -> np.ndarray:
     return image
 
 
+_cnn_enhancer: object | None = None
+
+
+def _apply_cnn_enhance(image: np.ndarray, config: AstroFrameConfig) -> np.ndarray:
+    """Passo CNN residual (opcional): aprende a melhorar com exemplos.
+
+    Ativo apenas com `config.ai.cnn_enhance` e um modelo treinado
+    (`~/.astroframe/enhancer_cnn.npz`); sem modelo devolve a imagem
+    intacta — nunca piora o resultado.
+    """
+    global _cnn_enhancer
+    if _cnn_enhancer is None:
+        from astroframe.ai.cnn import ResidualEnhancer
+
+        _cnn_enhancer = ResidualEnhancer()
+    return _cnn_enhancer.apply(image)
+
+
 def enhance_image(
     image: np.ndarray,
     config: AstroFrameConfig | None = None,
@@ -66,4 +84,7 @@ def enhance_image(
     image = clahe_enhance(image, config)
     if use_denoise:
         image = denoise(image, config)
-    return unsharp_mask(image, config)
+    image = unsharp_mask(image, config)
+    if config.ai.cnn_enhance:
+        image = _apply_cnn_enhance(image, config)
+    return image

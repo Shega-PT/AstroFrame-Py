@@ -150,6 +150,47 @@ class FeedbackConfig:
 
 
 @dataclass
+class TuningConfig:
+    """Auto-tuning (hill-climbing limitado) de todos os parâmetros.
+
+    `budget_s` é o orçamento de tempo do otimizador; `seed` torna a busca
+    determinística; `anneal` permite aceitar pioras para escapar de mínimos
+    locais (nunca fora das gamas seguras do registry); `proxy_scale`/
+    `frames_per_sample` controlam a avaliação rápida (~480p, 3 frames);
+    `detection_weight` equilibra deteção vs melhoria no objetivo;
+    `params` limita a otimização a um subconjunto de caminhos registados.
+    """
+
+    enabled: bool = False
+    budget_s: float = 60.0
+    seed: int = 42
+    anneal: bool = True
+    proxy_scale: float = 0.5
+    frames_per_sample: int = 3
+    detection_weight: float = 0.6
+    params: list[str] | None = None
+
+
+@dataclass
+class AIConfig:
+    """Redes neurais pequenas (opcionais, todas OFF por omissão).
+
+    O núcleo é NumPy puro; `backend="torch"` ativa a aceleração opcional
+    quando o PyTorch está instalado (extra `astroframe[rife]` inclui torch).
+    `lstm_trajectory` melhora a anti-trepidação temporal prevendo o
+    centroide (extrapolação linear + LSTM opcional); `cnn_enhance` adiciona
+    um passo residual de melhoria aprendida ao final do `enhance_image`;
+    `disk_filter` (0–1) é o limiar de confiança da CNN para descartar falsos
+    positivos da deteção (0.0 = desligado; nunca esvazia a lista detetada).
+    """
+
+    backend: str = "numpy"
+    lstm_trajectory: bool = False
+    cnn_enhance: bool = False
+    disk_filter: float = 0.0
+
+
+@dataclass
 class AstroFrameConfig:
     clahe: CLAHEConfig = field(default_factory=CLAHEConfig)
     denoise: DenoiseConfig = field(default_factory=DenoiseConfig)
@@ -160,6 +201,8 @@ class AstroFrameConfig:
     polish: PolishConfig = field(default_factory=PolishConfig)
     score: ScoreConfig = field(default_factory=ScoreConfig)
     feedback: FeedbackConfig = field(default_factory=FeedbackConfig)
+    tuning: TuningConfig = field(default_factory=TuningConfig)
+    ai: AIConfig = field(default_factory=AIConfig)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
