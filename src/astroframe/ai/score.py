@@ -103,7 +103,7 @@ def _noise_level(image: np.ndarray, cx: int, cy: int, radius: float, config: Ast
 
 
 def _contrast_range(image: np.ndarray, cx: int, cy: int, radius: float, config: AstroFrameConfig) -> float:
-    """Razão p99/p50 da intensidade na coroa (contraste útil do eclipse)."""
+    """Razão p99/p50 da intensidade na coroa (contraste útil do limbo do astro)."""
     height, width = image.shape[:2]
     gray = image if image.ndim == 2 else cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     ys, xs = np.ogrid[:height, :width]

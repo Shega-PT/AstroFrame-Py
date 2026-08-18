@@ -13,7 +13,7 @@ neural networks), described in [section 4](#4-ai-layer-auto-tuning-and-small-neu
 
 # 1 Video Tracking and Stabilization (Jitter Cancellation)
 
-Instead of trying to stabilize the background (which is dark or uniform), the algorithm detects the centroid of the Sun/Moon in each frame and moves the image to keep the eclipse always at the exact center of the frame.
+Instead of trying to stabilize the background (which is dark or uniform), the algorithm detects the centroid of the Sun/Moon in each frame and moves the image to keep the celestial body always at the exact center of the frame.
 
 Shape Detection: Uses the Hough Circle Transform (`cv2.HoughCircles`) or detection of the largest contours (`cv2.findContours`).
 
@@ -45,7 +45,7 @@ import numpy as np
 import gradio as gr
 
 
-def auto_enhance_eclipse_frame(img):
+def auto_enhance_celestial_frame(img):
     """
     Applies adaptive equalization and sharpening focused on astrophotography.
     """
@@ -109,14 +109,14 @@ def process_image_pipeline(input_image):
     # 1. Center on the solar disk
     stabilized = center_and_stabilize(input_image)
     # 2. Apply automatic enhancements
-    result = auto_enhance_eclipse_frame(stabilized)
+    result = auto_enhance_celestial_frame(stabilized)
     return result
 
 
 # Minimal Interface with Gradio
-with gr.Blocks(title="Eclipse Auto-Enhancer") as demo:
-    gr.Markdown("# 🌒 Eclipse Auto-Enhancer AI System")
-    gr.Markdown("Automatic enhancement and geometric stabilization for eclipse photos and frames.")
+with gr.Blocks(title="AstroFrame") as demo:
+    gr.Markdown("# AstroFrame — geometric stabilization and automatic enhancement of astrophotographs and astrovideos")
+    gr.Markdown("Detects celestial bodies (Sun, Moon, planets, comets) and stabilizes and enhances their photos and videos automatically.")
 
     with gr.Row():
         input_img = gr.Image(label="Original Photo/Frame")
@@ -157,7 +157,8 @@ safe ranges.
 Two pieces work together:
 
 - **Proxy evaluation** (`ProxyEval`) — the pipeline runs on the calibration
-  images (`samples/` + `calibration.json` ground truth) reduced to ~480p
+  images (`samples/`; ground truth by default at `Logs/train/calibration.json`,
+  with `samples/calibration.json` as fallback) reduced to ~480p
   (maximum work scale 0.5, never upscaled). The detection is compared with
   the expected disks: **mean IoU** between detected (Hough) and ground-truth
   disks, with **penalties for extra/missing disks**; a few enhanced frames
@@ -175,7 +176,7 @@ Two pieces work together:
 
 The orchestration (`run_autotune`) evaluates, optimizes, exports the tuned
 configuration (`export_trained_config`, by default
-`samples/trained_config.json`) and **registers the result in the feedback
+`Logs/train/trained_config.json`) and **registers the result in the feedback
 DB** (`tuning` table). From then on, `apply_learned` applies those deltas
 automatically to every run of the same profile. Entry points: the CLI
 (`astroframe autotune`) and the *Auto-tune* tab of the Gradio interface.
@@ -198,7 +199,7 @@ reports the optional PyTorch). Two applications:
   `AntiJitterStabilizer` (`ai.lstm_trajectory`): in frames without
   detection the centroid is **predicted** instead of frozen.
 
-Models are saved as versioned `.npz` files (`~/.astroframe/lstm.npz`); a
+Models are saved as versioned `.npz` files (`Logs/weights/lstm.npz`); a
 corrupt or wrong-version file falls back silently.
 
 ## 4.4 CNN (`ai.cnn`)
@@ -219,7 +220,22 @@ MLP head) with two interchangeable heads, deterministic offline training
   threshold — filtering false positives of the Hough transform. It
   **never empties** the detected list: the detection never regresses.
 
-Models: `~/.astroframe/enhancer_cnn.npz` and `~/.astroframe/disk_filter.npz`.
+Models: `Logs/weights/enhancer_cnn.npz` and `Logs/weights/disk_filter.npz`.
+
+### Training the NNs
+
+- **Detection CNN** — the `validator.py` automatic training collects disk
+  patches each series (`cnn_positives` from guide circles, `cnn_negatives`
+  from rejected shapes + deterministic random crops excluded by IoU) and
+  retrains `DiskFilter` between series (`--cnn`). The result is compared with
+  the **champion** in the `models` table by `score`; if strictly better it is
+  promoted to the canonical path and the next series warm-starts from the
+  champion's weights.
+- **Residual CNN** — `enhancer_trainer.py` (GUI Valid/Rejected or `--auto`)
+  accumulates pairs (input, CNN output) / (input, input) and calls
+  `train_enhancer_round`, which compares by `mean_delta` (1 − MSE) against
+  the champion and promotes if better.
+- Both trainers log every round into the `models`/`logs` tables.
 
 ## 4.5 Feedback Integration (`ai.feedback`)
 
@@ -231,7 +247,9 @@ Models: `~/.astroframe/enhancer_cnn.npz` and `~/.astroframe/disk_filter.npz`.
 Both are clamped through the `ai.params` registry. This is the AI "memory"
 across runs: with nothing learned, the configuration is returned unchanged.
 `ASTROFRAME_FEEDBACK_DB` overrides the database path
-(`~/.astroframe/feedback.db` by default).
+(`Logs/logs/system/feedback.db` by default). Since v0.8.0 the same database also
+holds the `models` table (NN artifacts: kind, metric value, promoted flag,
+champion status, series) and the `logs` table (per-component event history).
 
 ## 4.6 Security Model
 

@@ -5,8 +5,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import cv2
 import numpy as np
 import pytest
+import validator
 from validator import (
     AUTO_IOU_END,
     AUTO_IOU_MAX,
@@ -20,27 +22,36 @@ from validator import (
     ValidationSession,
     ValidatorState,
     apply_effective,
+    apply_state_weights,
     auto_iou_threshold,
     best_gt_iou,
     build_global_report,
     circle_from_dict,
     circle_to_dict,
+    classifier_accuracy,
     effective_params,
     export_trained,
     filter_unjudged,
+    main,
     metrics_from_report,
     nudge_deltas,
     persistent_rejected,
     rounds_text,
+    run_auto_headless,
     same_shape,
     sample_done_text,
+    train_classifier_round,
 )
 
+from astroframe.ai.cnn import fit_classifier
+from astroframe.ai.feedback import FeedbackDB
 from astroframe.calibration.scan import SampleRef
 from astroframe.calibration.store import CalibrationItem, CalibrationStore
 from astroframe.calibration.validate import validate_all
 from astroframe.config import AstroFrameConfig
 from astroframe.core.stabilizer import DiskDetection
+from astroframe.paths import train_dir
+from tests.helpers import make_disk_image
 
 CIRCLE = DiskDetection(100, 100, 50)
 
@@ -585,3 +596,246 @@ def test_auto_trainer_erro_de_leitura_registado(tmp_path, monkeypatch):
     report = trainer.run_series()
     assert report.samples_done == 0
     assert any("erro ao ler" in error for error in report.errors)
+
+
+# ------------------------------------------------- CNN de deteção (auto) --
+
+
+def make_samples_dir(tmp_path: Path, n: int = 2) -> Path:
+    """Pasta `samples` com `n` imagens + ground truth (calibration.json)."""
+    root = tmp_path / "samples"
+    root.mkdir()
+    store = CalibrationStore(root / "calibration.json")
+    for i in range(n):
+        name = f"sample_{i}.jpg"
+        image, cx, cy = make_disk_image()
+        cv2.imwrite(str(root / name), image)
+        store.items[name] = CalibrationItem(name, "image", None, 480, 360, [CIRCLE])
+    store.save()
+    return root
+
+
+def make_patch_pairs(n=6, seed=3):
+    rng = np.random.default_rng(seed)
+    pos = np.clip(rng.normal(0.6, 0.2, (n, 48, 48)), 0, 1)
+    neg = np.clip(rng.normal(0.2, 0.1, (n, 48, 48)), 0, 1)
+    return [p.astype(np.float64) for p in pos], [p.astype(np.float64) for p in neg]
+
+
+def test_estado_v1_para_v2_migra_sem_perda(tmp_path):
+    v1 = {"version": 1, "deltas": {"param1": 0.5}, "rewards": 3, "punishments": 1,
+          "round": 2, "rounds": [{"round": 1, "mode": "auto"}], "samples": {}}
+    path = tmp_path / "state.json"
+    path.write_text(json.dumps(v1), encoding="utf-8")
+    state = ValidatorState(path)
+    assert state.deltas == {"param1": 0.5}
+    assert state.rewards == 3 and state.round == 2
+    assert state.cnn_positives == 0 and state.cnn_series == []
+    state.save()
+    state2 = ValidatorState(path)
+    assert state2.deltas == {"param1": 0.5}
+
+
+def test_estado_versao_desconhecida_ignorada(tmp_path):
+    path = tmp_path / "state.json"
+    path.write_text(json.dumps({"version": 99, "deltas": {"x": 1.0}}), encoding="utf-8")
+    state = ValidatorState(path)
+    assert state.deltas == {}
+
+
+def test_estado_guardar_e_ler_campos_cnn(tmp_path):
+    state = ValidatorState(tmp_path / "state.json")
+    state.cnn_positives = 5
+    state.cnn_negatives = 3
+    state.cnn_series = [{"round": 1, "accuracy": 0.9, "promoted": True}]
+    state.save()
+    loaded = ValidatorState(tmp_path / "state.json")
+    assert loaded.cnn_positives == 5
+    assert loaded.cnn_negatives == 3
+    assert loaded.cnn_series[0]["accuracy"] == 0.9
+
+
+def test_estado_reset_limpa_campos_cnn(tmp_path):
+    state = ValidatorState(tmp_path / "state.json")
+    state.cnn_positives = 9
+    state.reset()
+    loaded = ValidatorState(tmp_path / "state.json")
+    assert loaded.cnn_positives == 0 and loaded.cnn_series == []
+
+
+def test_auto_trainer_recolhe_patches_positivos_e_negativos(tmp_path, monkeypatch):
+    monkeypatch.setattr("validator.find_all_disks", lambda _f, _c: [CIRCLE])
+    store = CalibrationStore(tmp_path / "calibration.json")
+    store.items["a.jpg"] = CalibrationItem("a.jpg", "image", None, 640, 480, [CIRCLE])
+    config = AstroFrameConfig()
+    state = ValidatorState(tmp_path / "validator_state.json")
+    samples = [make_sample("a.jpg")]
+    monkeypatch.setattr("validator.load_frame", lambda _s: np.zeros((200, 200, 3), dtype=np.uint8))
+    trainer = AutoTrainer(samples, store, config, state)
+    report = trainer.run_series()
+    assert len(trainer.positives) == 1
+    assert trainer.positives[0].shape == (48, 48)
+    assert len(trainer.negatives) >= 1
+    assert report.cnn_positives == 1
+    assert report.cnn_negatives == len(trainer.negatives)
+    assert state.cnn_positives == 0  # contagens só no fim, via train_classifier_round
+
+
+def test_auto_trainer_sem_recolha_de_patches(tmp_path, monkeypatch):
+    monkeypatch.setattr("validator.find_all_disks", lambda _f, _c: [CIRCLE])
+    store = CalibrationStore(tmp_path / "calibration.json")
+    store.items["a.jpg"] = CalibrationItem("a.jpg", "image", None, 640, 480, [CIRCLE])
+    config = AstroFrameConfig()
+    state = ValidatorState(tmp_path / "validator_state.json")
+    samples = [make_sample("a.jpg")]
+    monkeypatch.setattr("validator.load_frame", lambda _s: np.zeros((100, 100, 3), dtype=np.uint8))
+    trainer = AutoTrainer(samples, store, config, state, collect_patches=False)
+    report = trainer.run_series()
+    assert trainer.positives == [] and trainer.negatives == []
+    assert report.cnn_positives == 0 and report.cnn_negatives == 0
+
+
+def test_auto_trainer_filtra_com_cnn_sem_esvaziar(tmp_path, monkeypatch):
+    model, _ = fit_classifier(
+        make_patch_pairs()[0], make_patch_pairs()[1], epochs=2, seed=4
+    )
+    model_path = tmp_path / "filter.npz"
+    model.save(model_path)
+    monkeypatch.setattr("validator.find_all_disks", lambda _f, _c: [CIRCLE])
+    store = CalibrationStore(tmp_path / "calibration.json")
+    store.items["a.jpg"] = CalibrationItem("a.jpg", "image", None, 640, 480, [CIRCLE])
+    config = AstroFrameConfig()
+    state = ValidatorState(tmp_path / "validator_state.json")
+    samples = [make_sample("a.jpg")]
+    monkeypatch.setattr("validator.load_frame", lambda _s: np.zeros((100, 100, 3), dtype=np.uint8))
+    trainer = AutoTrainer(
+        samples, store, config, state, cnn_model_path=model_path, cnn_threshold=0.99
+    )
+    assert trainer._filter is not None
+    report = trainer.run_series()
+    assert report.samples_done == 1  # filtro nunca esvazia → julgamento normal
+
+
+def test_auto_trainer_cnn_model_path_inexistente(tmp_path, monkeypatch):
+    monkeypatch.setattr("validator.find_all_disks", lambda _f, _c: [CIRCLE])
+    trainer, state = make_auto_trainer(tmp_path, [CIRCLE], monkeypatch)
+    trainer2 = AutoTrainer(
+        trainer.samples, trainer.store, trainer.config, state,
+        cnn_model_path=tmp_path / "ausente.npz",
+    )
+    assert trainer2._filter is None
+
+
+def test_classifier_accuracy_metricas():
+    pos, neg = make_patch_pairs(8)
+    model, _ = fit_classifier(pos, neg, epochs=3, seed=5)
+    acc = classifier_accuracy(model, pos, neg, 5)
+    assert 0.0 <= acc <= 1.0
+    assert classifier_accuracy(model, [], [], 5) == 0.0
+
+
+def test_train_classifier_round_sem_patches_suficientes(tmp_path, monkeypatch):
+    db = FeedbackDB(tmp_path / "fb.db")
+    state = ValidatorState(tmp_path / "state.json")
+    result = train_classifier_round([], [], state, 1, None, db=db)
+    assert result == {"skipped": True}
+    assert db.logs(component="validator")[0]["message"].startswith("Série 1: sem patches")
+
+
+def test_train_classifier_round_promove_e_grava(tmp_path):
+    db = FeedbackDB(tmp_path / "fb.db")
+    state = ValidatorState(tmp_path / "state.json")
+    pos, neg = make_patch_pairs(6)
+    result = train_classifier_round(pos, neg, state, 1, score=90.0, epochs=3, db=db)
+    assert result["skipped"] is False
+    assert result["promoted"] is True
+    assert validator.CNN_CANONICAL_PATH.exists()
+    assert state.cnn_series[0]["round"] == 1
+    assert state.cnn_series[0]["score"] == 90.0
+    assert db.champion("disk_filter")["path"] == str(result["staged"])
+
+
+def test_train_classifier_round_mantem_campeao_quando_pior(tmp_path):
+    db = FeedbackDB(tmp_path / "fb.db")
+    state = ValidatorState(tmp_path / "state.json")
+    pos, neg = make_patch_pairs(6, seed=8)
+    first = train_classifier_round(pos, neg, state, 1, score=90.0, epochs=3, db=db)
+    second = train_classifier_round(pos, neg, state, 2, score=80.0, epochs=3, db=db)
+    assert first["promoted"] is True
+    assert second["promoted"] is False
+    assert second["champion_path"] == str(first["staged"])
+    assert state.cnn_series[-1]["promoted"] is False
+
+
+def test_train_classifier_round_sem_score_usa_accuracy(tmp_path):
+    db = FeedbackDB(tmp_path / "fb.db")
+    state = ValidatorState(tmp_path / "state.json")
+    pos, neg = make_patch_pairs(6, seed=9)
+    result = train_classifier_round(pos, neg, state, 1, score=None, epochs=3, db=db)
+    assert result["skipped"] is False
+    assert db.champion("disk_filter")["metrics"]["score"] == 0.0
+    assert db.champion("disk_filter")["metrics"]["accuracy"] > 0.0
+
+
+def test_run_auto_headless_cnn_ligada(tmp_path, capsys):
+    root = make_samples_dir(tmp_path)
+    assert run_auto_headless(str(root), series=1, epochs=2) == 0
+    out = capsys.readouterr().out
+    assert "CNN ligada" in out
+    assert "patches CNN recolhidos" in out
+    state = ValidatorState(train_dir() / validator.DEFAULT_STATE_NAME)
+    assert len(state.cnn_series) == 1
+
+
+def test_run_auto_headless_cnn_desligada(tmp_path, capsys):
+    root = make_samples_dir(tmp_path)
+    assert run_auto_headless(str(root), series=1, epochs=2, cnn=False) == 0
+    out = capsys.readouterr().out
+    assert "CNN desligada" in out
+    state = ValidatorState(train_dir() / validator.DEFAULT_STATE_NAME)
+    assert state.cnn_series == []
+
+
+def test_run_auto_headless_sem_amostras(tmp_path):
+    root = tmp_path / "samples"
+    root.mkdir()
+    assert run_auto_headless(str(root), series=1, epochs=2) == 0
+    assert not validator.CNN_CANONICAL_PATH.exists()
+
+
+def test_cli_auto_com_flags_cnn(tmp_path, capsys):
+    root = make_samples_dir(tmp_path)
+    assert main(["--samples", str(root), "--auto", "--series", "1", "--epochs", "2",
+                 "--cnn-off", "--cnn-threshold", "0.4"]) == 0
+    assert "CNN desligada" in capsys.readouterr().out
+
+
+def test_apply_state_weights_ignora_delta_desconhecido(tmp_path):
+    state = ValidatorState(tmp_path / "state.json")
+    state.deltas = {"param_inexistente": 1.0, "denoise.h": 0.5}
+    apply_state_weights(state)
+    assert "denoise.h" in state.deltas
+
+
+def test_random_negatives_frame_pequena_nao_recolhe(tmp_path, monkeypatch):
+    monkeypatch.setattr("validator.find_all_disks", lambda _f, _c: [])
+    trainer, state = make_auto_trainer(tmp_path, [], monkeypatch)
+    trainer._random_negatives(np.zeros((20, 20, 3), dtype=np.uint8), [], "mini")
+    assert trainer.negatives == []
+
+
+def test_random_negatives_descarta_crops_que_tocam_o_guia(tmp_path, monkeypatch):
+    monkeypatch.setattr("validator.find_all_disks", lambda _f, _c: [])
+    trainer, state = make_auto_trainer(tmp_path, [], monkeypatch)
+    frame = np.zeros((96, 96, 3), dtype=np.uint8)
+    gt = [DiskDetection(cx, cy, 8) for cy in range(8, 96, 9) for cx in range(8, 96, 9)]
+    trainer._random_negatives(frame, gt, "densa")
+    assert trainer.negatives == []
+
+
+def test_export_trained_ignora_delta_desconhecido(tmp_path):
+    state = ValidatorState(tmp_path / "state.json")
+    state.deltas = {"param_inexistente": 1.0, "denoise.h": 0.5}
+    path = export_trained(state, AstroFrameConfig(), tmp_path / "out.json")
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    assert data["deltas"] == {"param_inexistente": 1.0, "denoise.h": 0.5}

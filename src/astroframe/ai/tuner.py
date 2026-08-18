@@ -41,6 +41,7 @@ from astroframe.calibration.validate import validate_all
 from astroframe.config import AstroFrameConfig
 from astroframe.core.enhancer import enhance_image
 from astroframe.core.stabilizer import DiskDetection, find_all_disks
+from astroframe.paths import calibration_json
 
 logger = logging.getLogger(__name__)
 
@@ -137,7 +138,7 @@ class ProxyEval:
         self.detection_weight = _clamp01(detection_weight)
         self.seed = seed
         self.samples = scan_samples(self.samples_dir)
-        self.store = CalibrationStore(self.samples_dir / "calibration.json")
+        self.store = CalibrationStore(calibration_json(self.samples_dir))
         self._cache: dict[str, TuneReport] = {}
 
     def _scale_for(self, height: int, width: int) -> float:

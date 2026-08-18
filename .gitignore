@@ -10,7 +10,14 @@ venv/
 .pytest_cache/
 .coverage
 htmlcov/
-outputs/
+Logs/**
+!Logs/.gitkeep
+!Logs/logs/
+!Logs/logs/ia/
+!Logs/logs/system/
+!Logs/train/
+!Logs/weights/
+!Logs/**/.gitkeep
 SDV_0233.MP4
 samples/calibration.json
 samples/validator_state.json

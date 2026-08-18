@@ -65,8 +65,8 @@ L'interface a trois onglets :
 
 - **Entrée** — charger la photo/frame (format d'image arbitraire).
 - **Stabilisée** — disque centré, avec les disques détectés dessinés :
-  **vert** = astre le plus grand, **jaune** = compagnons d'éclipse (ex. la
-  Lune entrant dans le Soleil), **rouge** = reflets de l'objectif.
+  **vert** = astre le plus grand, **jaune** = disques secondaires (p. ex. la
+  Lune devant le Soleil), **rouge** = reflets de l'objectif.
 - **Traitée** — CLAHE + débruitage + netteté + **polissage par astre**
   (chaque astre rehaussé individuellement et recomposé sans couture ; fond =
   moyenne du fond original ; reflets supprimés).
@@ -95,8 +95,8 @@ L'interface a trois onglets :
    modifiables.
 2. **Traiter la vidéo** — pendant que la pipeline tourne :
    - **Gauche (en direct)** — la frame originale en temps réel avec les
-     disques détectés : **vert** = astre le plus grand, **jaune** = compagnons
-     d'éclipse, **rouge** = reflets de l'objectif.
+     disques détectés : **vert** = astre le plus grand, **jaune** = disques
+     secondaires, **rouge** = reflets de l'objectif.
    - **Droite (résultat final)** — à des frames bien espacées, le résultat
      avec toutes les corrections (stabilisée + CLAHE + débruitage + netteté +
      polissage par astre).
@@ -135,7 +135,7 @@ nombre d'évaluations) et la **configuration résultante** (JSON). Le bouton
 ### Base d'apprentissage (où c'est stocké)
 
 Les exécutions (paramètres utilisés, métriques et évaluations) sont stockées
-dans un fichier SQLite à `~/.astroframe/feedback.db`. Vous pouvez changer
+dans un fichier SQLite à `Logs/logs/system/feedback.db`. Vous pouvez changer
 l'emplacement avec la variable d'environnement `ASTROFRAME_FEEDBACK_DB` (par
 exemple pour partager l'apprentissage entre plusieurs machines).
 
@@ -159,7 +159,7 @@ astroframe calibrate --samples samples       # équivalent (CLI installée)
 - **Vidéos** (mp4/avi/mov/mkv/m4v) — chacune contribue 8 frames échantillonnées
   de façon équidistante et déterministe (reproductible dans la validation).
 - Le dossier est scanné récursivement : organisez-le par sujet comme vous
-  voulez (éclipse, lune, soleil, planètes — sous-dossiers dans
+  voulez (Soleil, Lune, planètes — sous-dossiers dans
   `samples/images/` et `samples/videos/`).
 
 ### Workflow
@@ -180,7 +180,8 @@ Le flux se déroule en **deux passes** :
         droit/milieu → déplacer ; **Suppr** supprime la forme sélectionnée,
         les flèches la déplacent de 1 px (Maj = 10 px).
    3. **Enregistrer (Ctrl+S)** — écrit le ground truth de l'élément dans
-      `samples/calibration.json` (fichier local, ignoré par git).
+      `Logs/train/calibration.json` (défaut global ; repli :
+      `samples/calibration.json` ; fichier local, ignoré par git).
 2. **2e passe — validation (activez « Détection automatique au chargement ») :**
    4. **Les échantillons sans ground truth** sont remplis automatiquement par
       la détection ; ceux enregistrés s'ouvrent exactement comme vous les
@@ -204,7 +205,7 @@ Le flux se déroule en **deux passes** :
 ### À quoi sert la calibration
 
 Les cercles manuels sont la "bonne réponse" que le système compare avec la
-détection automatique. Avec un dossier varié (éclipses, Lune, Soleil, planètes
+détection automatique. Avec un dossier varié (Lune, Soleil, planètes
 — disques grands et petits, contraste haut et bas), la validation montre où la
 détection échoue et quoi ajuster dans le `config.yaml` avant de traiter le
 matériel réel.
@@ -213,7 +214,7 @@ matériel réel.
 
 `validator.py` utilise ce même ground truth pour **affiner la détection par
 forme** : il parcourt les échantillons un par un, montre ce que
-`find_all_disks` a trouvé (disque principal + compagnons d'éclipse) sur
+`find_all_disks` a trouvé (disque principal + disques secondaires) sur
 l'image, et apprend à distinguer les bonnes détections des fausses.
 
 ```bash
@@ -221,6 +222,8 @@ python validator.py                          # fenêtre desktop (tkinter)
 python validator.py --check                  # rapport sans interface
 python validator.py --auto --series 3        # entraînement automatique (3 séries)
 python validator.py --auto --iou 0.7         # IoU minimum exigé avec le guide
+python validator.py --auto --cnn --epochs 8  # entraîne la CNN de détection entre séries
+python validator.py --auto --cnn-off         # désactive la CNN (défaut)
 python validator.py --reset-state --check    # repartir de zéro et vérifier
 ```
 
@@ -243,14 +246,27 @@ python validator.py --reset-state --check    # repartir de zéro et vérifier
    minimales et maximales et un historique d'application.
 4. **Rapport final** — score de la détection, poids entraînés avec des
    **infobulles ⓘ** expliquant chaque paramètre, et le bouton **Enregistrer**
-   exporte la configuration entraînée vers `trained_config.json` (dans le
-   dossier des échantillons), prête pour le système réel.
+   exporte la configuration entraînée vers `Logs/train/trained_config.json`
+   (par défaut), prête pour le système réel.
+5. **CNN de détection (optionnelle, v0.8.0)** — avec `--cnn` (ou la case
+   **Entraîner la CNN** dans la fenêtre d'entraînement auto), chaque série
+   collecte des patches de disques (positifs = cercles du guide ; négatifs =
+   formes rejetées + recadrages aléatoires déterministes exclus par IoU). À
+   la fin de la série la CNN `DiskFilter` est ré-entraînée et la série
+   suivante juge avec le nouveau modèle (`--cnn-threshold`, défaut `0.5`). Le
+   résultat est comparé au **champion** enregistré dans la base : s'il est
+   strictement meilleur il est promu vers `Logs/weights/disk_filter.npz` et
+   la série suivante repart des poids du champion (warm-start). Le filtre ne
+   vide jamais la liste détectée.
 
 ### État
 
-- La progression est conservée dans `validator_state.json` (dans le dossier
-  des échantillons par défaut) : tours, séries, historique des
+- La progression est conservée dans `Logs/train/validator_state.json` (par
+  défaut) : tours, séries, historique des
   poids/deltas et l'IoU minimum actuel.
+- Depuis la v0.8.0 l'état stocke aussi `cnn_positives`, `cnn_negatives` et
+  `cnn_series` ; les fichiers des anciennes versions se lisent toujours
+  (l'entraînement CNN repart de zéro).
 - `--reset-state` efface tout (y compris l'historique) et repart ; seul, il
   ouvre ensuite l'interface ; combiné à `--check`/`--auto`, il s'exécute sans
   fenêtre.
@@ -272,7 +288,31 @@ Les sous-commandes complètes (`astroframe --help`) :
 
 La validation/entraînement de la détection est un script séparé (voir
 [Validation et entraînement de la détection](#validation-et-entraînement-de-la-détection)) :
-`python validator.py [--check|--auto|--reset-state|--iou N]`.
+`python validator.py [--check|--auto|--reset-state|--iou N|--cnn|--cnn-off|--epochs N|--cnn-threshold F]`.
+
+### Entraîneur de la CNN résiduelle (`enhancer_trainer.py`)
+
+[v0.8.0] Entraîne et valide le réseau résiduel d'amélioration d'image
+(`Logs/weights/enhancer_cnn.npz`, utilisé avec `ai.cnn_enhance=true`) :
+
+```bash
+python enhancer_trainer.py                          # fenêtre côte à côte (tkinter)
+python enhancer_trainer.py --check                  # rapport sans interface
+python enhancer_trainer.py --auto --series 3        # séries avec dégradation synthétique
+python enhancer_trainer.py --auto --epochs 10 --export sortie.npz
+```
+
+- Dans la fenêtre, chaque échantillon montre **sans-CNN vs avec-CNN** côte à
+  côte ; **Valide** enregistre la paire (entrée, sortie CNN) et **Rejeté**
+  enregistre (entrée, entrée) — le réseau apprend où ne pas toucher.
+  **Entraîner maintenant** entraîne la résiduelle avec les paires accumulées
+  (warm-start du champion), compare la qualité moyenne au champion de la base
+  et promeut si meilleure.
+- `--auto` génère des paires par dégradation synthétique (bruit/flou) et
+  entraîne en série, en promouvant le champion à chaque tour.
+- `--check` évalue le modèle actuel contre le ground truth des échantillons.
+- `--samples DOSSIER` change le dossier (défaut `samples`), `--state`/
+  `--reset-state` gèrent la progression, `--seed N` fixe la dégradation.
 
 ### Photos en lot
 
@@ -326,7 +366,7 @@ astroframe autotune --samples samples --reset               # efface l'historiqu
 | `--no-anneal` | Désactive le recuit (acceptation de pires solutions) — recherche plus conservatrice |
 | `--params` | Sous-ensemble de paramètres (ex. `clahe.clip_limit,denoise.h`) |
 | `--profile` | Profil d'apprentissage dans la base (défaut : `tuning`) |
-| `--export` | Fichier JSON de la configuration optimisée (défaut : `<samples>/trained_config.json`) |
+| `--export` | Fichier JSON de la configuration optimisée (défaut : `Logs/train/trained_config.json`) |
 | `--reset` | Efface l'historique d'auto-réglage de la base avant d'optimiser |
 
 Comment ça marche :
@@ -345,7 +385,7 @@ Comment ça marche :
   même profil via `apply_learned`. Sans rien d'appris, la configuration reste
   inchangée.
 - **Pré-seed LSTM** — si un modèle LSTM entraîné existe
-  (`~/.astroframe/lstm.npz`), ses prédictions initialisent la recherche quand
+  (`Logs/weights/lstm.npz`), ses prédictions initialisent la recherche quand
   elles améliorent l'objectif du proxy.
 
 ## Configuration (config.yaml)
@@ -404,7 +444,7 @@ Tous les champs et types :
 | Champ | Type | Défaut | Description |
 |---|---|---|---|
 | `enabled` | bool | `true` | Stocke les évaluations et applique l'ajustement appris aux sliders |
-| `db_path` | str | `~/.astroframe/feedback.db` | Base SQLite avec l'historique des exécutions et ajustements |
+| `db_path` | str | `Logs/logs/system/feedback.db` | Base SQLite avec l'historique des exécutions et ajustements |
 | `learning_rate` | float | `0.3` | Fraction du delta appliquée par exécution |
 | `user_weight` | float | `2.0` | Multiplicateur quand l'utilisateur évalue manuellement |
 | `history_limit` | int | `12` | Exécutions récentes considérées par profil |
@@ -448,7 +488,8 @@ plantent jamais le démarrage.
 
 ## Workflow vidéo
 
-1. **Capture** — enregistrer l'éclipse avec une caméra statique ; le
+1. **Capture** — enregistrer l'astre (p. ex. lors d'une éclipse, d'un transit ou
+   d'une occultation) avec une caméra statique ; le
    tremblement lent est acceptable (la stabilisation absolue par le disque le
    compense).
 2. **Présélection** (facultatif) : `astroframe video --input clip.mp4 --mode stack --stack-n 30`

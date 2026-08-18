@@ -40,6 +40,7 @@ from astroframe.ai.params import bounds as param_bounds
 from astroframe.ai.score import StarRating
 from astroframe.config import AstroFrameConfig
 from astroframe.core.stabilizer import DiskDetection
+from astroframe.paths import data_root
 
 logger = logging.getLogger(__name__)
 
@@ -163,7 +164,10 @@ class RunRecord:
 def _default_db_path(config: AstroFrameConfig | None) -> Path:
     override = os.environ.get("ASTROFRAME_FEEDBACK_DB")
     raw = override or (config or AstroFrameConfig()).feedback.db_path
-    return Path(raw).expanduser()
+    path = Path(raw).expanduser()
+    if path.is_absolute():
+        return path
+    return data_root() / path
 
 
 class FeedbackDB:

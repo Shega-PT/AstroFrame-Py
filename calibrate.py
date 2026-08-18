@@ -22,6 +22,8 @@ from __future__ import annotations
 import argparse
 import sys
 
+from astroframe.paths import migrate_legacy, setup_logging
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -48,6 +50,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    migrate_legacy()
+    setup_logging("calibrate.log")
     args = build_parser().parse_args(argv)
     try:
         if args.ui == "gradio":

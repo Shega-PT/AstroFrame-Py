@@ -10,7 +10,7 @@ O sistema divide-se em três etapas principais:
 
 # 1 Rastreamento e Estabilização de Vídeo (Cancelamento de Trepidação)
 
-Em vez de tentar estabilizar o fundo (que é escuro ou uniforme), o algoritmo deteta o centroide do Sol/Lua em cada frame e move a imagem para manter o eclipse sempre no centro exato do frame.
+Em vez de tentar estabilizar o fundo (que é escuro ou uniforme), o algoritmo deteta o centroide do Sol/Lua em cada frame e move a imagem para manter o astro sempre no centro exato do frame.
 
 Deteção de Forma: Utiliza a Transformada de Hough para Círculos (cv2.HoughCircles) ou deteção de contornos maiores (cv2.findContours).
 
@@ -42,7 +42,7 @@ import numpy as np
 import gradio as gr
 
 
-def auto_enhance_eclipse_frame(img):
+def auto_enhance_frame(img):
     """
     Aplica equalização adaptativa e nitidez focada em astrofotografia.
     """
@@ -106,14 +106,14 @@ def process_image_pipeline(input_image):
     # 1. Centralizar pelo disco solar
     stabilized = center_and_stabilize(input_image)
     # 2. Aplicar melhorias automáticas
-    result = auto_enhance_eclipse_frame(stabilized)
+    result = auto_enhance_frame(stabilized)
     return result
 
 
 # Interface Mínima com Gradio
-with gr.Blocks(title="Eclipse Auto-Enhancer") as demo:
-    gr.Markdown("# 🌒 Eclipse Auto-Enhancer AI System")
-    gr.Markdown("Melhoria automática e estabilização geométrica para fotos e frames do eclipse.")
+with gr.Blocks(title="Astro Auto-Enhancer") as demo:
+    gr.Markdown("# 🌒 Astro Auto-Enhancer")
+    gr.Markdown("Melhoria automática e estabilização geométrica para fotos e vídeos de astros.")
 
     with gr.Row():
         input_img = gr.Image(label="Foto/Frame Original")
@@ -162,7 +162,7 @@ depende deste ponto nunca falhar.
 ## 4.2 Auto-tuning (`ai.tuner`)
 
 - **Avaliação por proxy** (`ProxyEval`): corre a pipeline nas amostras de
-  calibração (`samples/` + `calibration.json`, ground truth desenhado à mão)
+  calibração (`samples/` + `Logs/train/calibration.json`, ground truth desenhado à mão)
   e mede o IoU médio entre discos detetados (Hough) e esperados, com
   penalizações por discos extra/em falta; alguns frames melhorados são ainda
   pontuados com estrelas (`ai.score`). Os frames são reduzidos a ~480p e os
@@ -193,7 +193,7 @@ portas i/f/o/g vetorizadas). Duas utilizações:
   `AntiJitterStabilizer`: com `ai.lstm_trajectory`, os frames sem deteção
   usam a previsão em vez de congelar o último deslocamento.
 
-Os modelos são `.npz` versionados (`~/.astroframe/lstm.npz`); ficheiros
+Os modelos são `.npz` versionados (`Logs/weights/lstm.npz`); ficheiros
 corrompidos ou com versão errada carregam como `None` (fallback silencioso).
 
 ## 4.4 CNN (`ai.cnn`)
@@ -209,7 +209,22 @@ diferenças finitas. Duas cabeças permutáveis:
   com P(disco); `find_all_disks` descarta os candidatos abaixo de
   `ai.disk_filter` (0–1) — a lista detetada **nunca** é esvaziada.
 
-Modelos: `~/.astroframe/enhancer_cnn.npz` e `~/.astroframe/disk_filter.npz`.
+Modelos: `Logs/weights/enhancer_cnn.npz` e `Logs/weights/disk_filter.npz`.
+
+### Treino dos modelos
+
+- **CNN de deteção** — o treino automático do `validator.py` recolhe patches
+  de discos em cada série (`cnn_positives` dos círculos do guia,
+  `cnn_negatives` de formas rejeitadas + recortes aleatórios determinísticos
+  excluídos por IoU) e retreina o `DiskFilter` entre séries (`--cnn`). O
+  resultado é comparado com o **campeão** da tabela `models` por `score`; se
+  estritamente melhor é promovido para o caminho canónico e a série seguinte
+  faz warm-start dos pesos do campeão.
+- **CNN residual** — `enhancer_trainer.py` (GUI Válido/Rejeitado ou `--auto`)
+  acumula pares (entrada, saída CNN) / (entrada, entrada) e chama
+  `train_enhancer_round`, que compara por `mean_delta` (1 − MSE) com o
+  campeão e promove se melhor.
+- Ambos os treinadores registam cada ronda nas tabelas `models` e `logs`.
 
 ## 4.5 Segurança e ciclo de vida
 

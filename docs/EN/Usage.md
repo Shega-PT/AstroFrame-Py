@@ -65,8 +65,8 @@ The interface has three tabs:
 
 - **Input** — load the photo/frame (arbitrary image format).
 - **Stabilized** — centered disk, with the detected disks drawn:
-  **green** = largest body, **yellow** = eclipse companions (e.g. the Moon
-  entering the Sun), **red** = lens reflections.
+  **green** = largest body, **yellow** = secondary disks (e.g. the Moon in
+  front of the Sun), **red** = lens reflections.
 - **Processed** — CLAHE + denoising + sharpening + **per-body polishing**
   (each body enhanced individually and recomposed seamlessly; background =
   mean of the original background; reflections removed).
@@ -92,8 +92,8 @@ The interface has three tabs:
    ratings of the same profile), but remain editable.
 2. **Process video** — while the pipeline runs:
    - **Left (live)** — the original frame in real time with the detected
-     disks: **green** = largest body, **yellow** = eclipse companions,
-     **red** = lens reflections.
+      disks: **green** = largest body, **yellow** = secondary disks,
+      **red** = lens reflections.
    - **Right (final result)** — at well-spaced frames, the result with all
      corrections (stabilized + CLAHE + denoising + sharpening + per-body
      polishing).
@@ -108,8 +108,9 @@ The interface has three tabs:
 ### Auto-tune tab
 
 Optimizes **all pipeline parameters** against the samples folder
-(`samples/` + `calibration.json` ground truth) — detection (IoU against the
-guide) + enhancement (stars) — with a deterministic, time-budgeted search:
+(`samples/`; ground truth by default at `Logs/train/calibration.json`, with
+`samples/calibration.json` as fallback) — detection (IoU against the guide) +
+enhancement (stars) — with a deterministic, time-budgeted search:
 
 - **Samples folder** — where the calibration material lives (default
   `samples`).
@@ -129,7 +130,7 @@ guide) + enhancement (stars) — with a deterministic, time-budgeted search:
 ### Learning base (where it is stored)
 
 The runs (parameters used, metrics and ratings) are stored in a SQLite file at
-`~/.astroframe/feedback.db`. You can change the location with the environment
+`Logs/logs/system/feedback.db`. You can change the location with the environment
 variable `ASTROFRAME_FEEDBACK_DB` (for example, to share the learning between
 several machines). The **auto-tuning results** are stored in the same database
 (`tuning` table) and applied automatically to the next runs of the same
@@ -155,8 +156,8 @@ astroframe calibrate --samples samples       # equivalent (installed CLI)
 - **Videos** (mp4/avi/mov/mkv/m4v) — each contributes 8 frames sampled
   equidistantly and deterministically (reproducible in validation).
 - The folder is scanned recursively: organize it by subject as you wish
-  (eclipse, moon, sun, planets — subfolders in `samples/images/` and
-  `samples/videos/`).
+  (Sun, Moon, planets, comets — e.g. an eclipse sequence — subfolders in
+  `samples/images/` and `samples/videos/`).
 
 ### Workflow
 
@@ -176,7 +177,9 @@ The flow works in **two passes**:
         button → pan; **Delete** removes the selected shape, arrow keys move
         it 1 px (Shift = 10 px).
    3. **Save (Ctrl+S)** — writes the item's ground truth to
-      `samples/calibration.json` (local file, ignored by git).
+      `Logs/train/calibration.json` (global default, ignored by git;
+      `samples/calibration.json` remains as fallback when the global file does
+      not exist).
 2. **2nd pass — validation (turn on "Automatic detection on load"):**
    4. **Samples without ground truth** are filled in automatically by the
       detection; saved ones open exactly as you left them. **Adjust** what is
@@ -197,7 +200,7 @@ The flow works in **two passes**:
 ### What the calibration is for
 
 The manual circles are the "right answer" that the system compares with the
-automatic detection. With a varied folder (eclipses, Moon, Sun, planets —
+automatic detection. With a varied folder (Sun, Moon, planets, comets —
 large and small disks, high and low contrast), the validation shows where the
 detection fails and what to adjust in the `config.yaml` before processing the
 real material.
@@ -206,7 +209,7 @@ real material.
 
 `validator.py` uses that same ground truth to **fine-tune the detection per
 shape**: it walks the samples one by one, shows what `find_all_disks` found
-(main disk + eclipse companions) over the image, and learns to tell correct
+(main disk + secondary disks) over the image, and learns to tell correct
 detections from false ones.
 
 ```bash
@@ -214,14 +217,16 @@ python validator.py                          # desktop window (tkinter)
 python validator.py --check                  # report without interface
 python validator.py --auto --series 3        # automatic training (3 series)
 python validator.py --auto --iou 0.7         # minimum IoU with the guide
+python validator.py --auto --cnn --epochs 8  # trains the detection CNN between series
+python validator.py --auto --cnn-off         # disables the CNN (default)
 python validator.py --reset-state --check    # start over and verify
 ```
 
 ### How it works
 
 1. **Manual round** — on each sample you see the detection and the manual
-   guide (`calibration.json`); **Accept/Reject** says whether the shape is
-   right.
+   guide (`calibration.json`, by default at `Logs/train/calibration.json`);
+   **Accept/Reject** says whether the shape is right.
    - With an **on-detect preview**: the detection is drawn over the image in
      real time before asking for the verdict.
 2. **Automatic training (`--auto`)** — no window: each series re-detects the
@@ -235,13 +240,26 @@ python validator.py --reset-state --check    # start over and verify
    and an application history.
 4. **Final report** — detection score, trained weights with **ⓘ tooltips**
    explaining each parameter, and the **Save** button exports the trained
-   configuration to `trained_config.json` (in the samples folder), ready for
-   the real system.
+   configuration to `trained_config.json` (in `Logs/train/` by default), ready
+   for the real system.
+5. **Detection CNN (optional, v0.8.0)** — with `--cnn` (or the **Train CNN**
+   checkbox in the auto-training window), each series collects disk patches
+   (positives = guide circles; negatives = rejected shapes + deterministic
+   random crops excluded by IoU). At the end of the series the `DiskFilter`
+   CNN is retrained and the next series judges with the new model
+   (`--cnn-threshold`, default `0.5`). The result is compared with the
+   **champion** stored in the database: if strictly better it is promoted to
+   `Logs/weights/disk_filter.npz` (round candidates stay in
+   `Logs/weights/staging/`) and the next series warm-starts from the
+   champion's weights. The filter never empties the detected list.
 
 ### State
 
-- Progress is kept in `validator_state.json` (in the samples folder by
-  default): rounds, series, weight/delta history and the current minimum IoU.
+- Progress is kept in `Logs/train/validator_state.json` by default: rounds,
+  series, weight/delta history and the current minimum IoU.
+- Since v0.8.0 the state also stores `cnn_positives`, `cnn_negatives` and
+  `cnn_series`; files from older versions still load (CNN training starts
+  from scratch).
 - `--reset-state` wipes everything (including the history) and starts over;
   alone it opens the interface afterwards, combined with `--check`/`--auto` it
   runs without a window.
@@ -251,10 +269,11 @@ python validator.py --reset-state --check    # start over and verify
 ## Auto-tuning
 
 [v0.7.0] Automatically optimizes the **detection/enhancement parameters**
-against the calibration material. It needs a samples folder with the ground
-truth (`samples/` + `calibration.json`, see
-[Calibration](#calibration)) — without it the proxy cannot score the
-detection and the tuning has nothing to compare against.
+against the calibration material. It needs the samples folder and the ground
+truth (by default `Logs/train/calibration.json`, falling back to
+`samples/calibration.json`, see [Calibration](#calibration)) — without it
+the proxy cannot score the detection and the tuning has nothing to compare
+against.
 
 ```bash
 astroframe autotune --samples samples --budget 60
@@ -272,7 +291,7 @@ astroframe autotune --samples samples --reset       # clears the tuning history 
 | `--no-anneal` | Disables the annealing (no accepting worse candidates) |
 | `--params p1,p2` | Subset of tunable parameters (default: all registered) |
 | `--profile NAME` | Camera profile used in the learning database |
-| `--export FILE` | Exports the optimized configuration (default `samples/trained_config.json`) |
+| `--export FILE` | Exports the optimized configuration (default `Logs/train/trained_config.json`) |
 | `--reset` | Clears the profile's tuning history before running |
 | `--config FILE` | Base `config.yaml` (the search starts from it) |
 
@@ -315,7 +334,31 @@ The complete subcommands (`astroframe --help`):
 
 The detection validation/training is a standalone script (see [Detection
 validation and training](#detection-validation-and-training)):
-`python validator.py [--check|--auto|--reset-state|--iou N]`.
+`python validator.py [--check|--auto|--reset-state|--iou N|--cnn|--cnn-off|--epochs N|--cnn-threshold F]`.
+
+### Residual CNN trainer (`enhancer_trainer.py`)
+
+[v0.8.0] Trains and validates the image-enhancement residual network
+(`Logs/weights/enhancer_cnn.npz`, used with `ai.cnn_enhance=true`):
+
+```bash
+python enhancer_trainer.py                          # side-by-side window (tkinter)
+python enhancer_trainer.py --check                  # report without interface
+python enhancer_trainer.py --auto --series 3        # series with synthetic degradation
+python enhancer_trainer.py --auto --epochs 10 --export out.npz
+```
+
+- In the window, every sample shows **no-CNN vs with-CNN** side by side;
+  **Valid** stores the pair (input, CNN output) and **Rejected** stores
+  (input, input) — the network learns where not to touch. **Train now**
+  trains the residual with the accumulated pairs (warm-start from the
+  champion), compares the mean quality with the database champion and
+  promotes if better.
+- `--auto` generates pairs through synthetic degradation (noise/blur) and
+  trains in series, promoting the champion each round.
+- `--check` evaluates the current model against the sample ground truth.
+- `--samples DIR` changes the folder (default `samples`), `--state`/
+  `--reset-state` manage progress, `--seed N` fixes the degradation.
 
 ### Batch photos
 
@@ -402,7 +445,7 @@ All fields and types:
 | Field | Type | Default | Description |
 |---|---|---|
 | `enabled` | bool | `true` | Stores ratings and applies the learned adjustment to the sliders |
-| `db_path` | str | `~/.astroframe/feedback.db` | SQLite database with the run history and adjustments |
+| `db_path` | str | `Logs/logs/system/feedback.db` | SQLite database with the run history and adjustments |
 | `learning_rate` | float | `0.3` | Fraction of the delta applied per run |
 | `user_weight` | float | `2.0` | Multiplier when the user rates manually |
 | `history_limit` | int | `12` | Recent runs considered per profile |
@@ -445,7 +488,7 @@ All fields and types:
 
 ## Video workflow
 
-1. **Capture** — record the eclipse with a static camera; slow jitter is
+1. **Capture** — record the Sun/Moon with a static camera; slow jitter is
    acceptable (the absolute disk stabilization compensates it).
 2. **Preselection** (optional): `astroframe video --input clip.mp4 --mode stack --stack-n 30`
    returns a single PNG with the best possible "snapshot".
@@ -470,4 +513,4 @@ All fields and types:
   [API.md](API.md).
 - **AI is off by default** — the auto-tuning and the neural networks only
   activate when configured (`tuning.enabled`, `ai.*`); a missing or corrupt
-  model in `~/.astroframe/` degrades silently and never blocks the pipeline.
+  model in `Logs/weights/` degrades silently and never blocks the pipeline.

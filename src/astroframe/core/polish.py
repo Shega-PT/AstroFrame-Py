@@ -3,11 +3,11 @@
 Depois da melhoria (CLAHE + denoise + nitidez), o polimento:
 
 - **deteta todos os astros** (`find_all_disks`) — o astro maior e os
-  companheiros de eclipse (ex.: a Lua a entrar no Sol), cada um com a sua
-  deteção própria;
+  discos secundários (ex.: a Lua diante do Sol, satélites diante de planetas),
+  cada um com a sua deteção própria;
 - **processa cada astro individualmente** — realce local (esticamento de
   contraste) e brilho extra, calculados com as estatísticas do próprio astro
-  (uma silhueta uniforme, como a Lua em eclipse, é preservada intacta);
+  (uma silhueta uniforme, como a Lua diante do Sol, é preservada intacta);
 - **recorta um pouco além do astro maior** (`corona_scale` × raio) — o anel
   entre o bordo do astro e a linha de recorte é **diluído** até ao fundo;
 - **remonta sem costuras** — as máscaras individuais (com feather) são
@@ -87,8 +87,8 @@ def _background_color(image: np.ndarray, cx: int, cy: int, radius: float, cfg) -
 def _astro_boost(image: np.ndarray, gray: np.ndarray, disk: DiskDetection, cfg) -> np.ndarray:
     """Realce individual de um astro (esticamento local de contraste + brilho).
 
-    Silhuetas escuras e uniformes (ex.: a Lua em eclipse) são devolvidas
-    intactas — esticar ou levantar o brilho destruiria o contraste do eclipse.
+    Silhuetas escuras e uniformes (ex.: a Lua diante do Sol) são devolvidas
+    intactas — esticar ou levantar o brilho destruiria o contraste do astro.
     """
     height, width = image.shape[:2]
     ys, xs = np.ogrid[:height, :width]
@@ -157,7 +157,7 @@ def polish_image(
     radius = float(detection.radius)
     gray = image if image.ndim == 2 else cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
-    # 1) separar astros de reflexos: companheiros de eclipse têm o centro
+    # 1) separar astros de reflexos: discos secundários têm o centro
     #    dentro do astro maior; ghosts (reflexos) ficam fora.
     disks = find_all_disks(image, config)
     astros: list[DiskDetection] = []
@@ -192,7 +192,7 @@ def polish_image(
         masks.append(np.minimum(band, primary_band))
         boosted.append(_astro_boost(image, gray, astro, cfg))
 
-    # o astro maior não invade o interior dos companheiros (cada um manda
+    # o astro maior não invade o interior dos discos secundários (cada um manda
     # na sua área; as sobreposições são suavizadas pelo blend ponderado)
     if len(masks) > 1:
         primary_mask = masks[0].copy()

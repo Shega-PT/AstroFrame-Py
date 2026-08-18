@@ -17,6 +17,7 @@ from astroframe.core.enhancer import enhance_image
 from astroframe.core.pipeline import process_path
 from astroframe.core.polish import polish_image
 from astroframe.core.stabilizer import AntiJitterStabilizer, DiskDetection, center_and_stabilize
+from astroframe.paths import setup_logging, train_dir
 from astroframe.video.reader import FrameReader
 from astroframe.video.select import sharpness
 from astroframe.video.stacking import stack_frames
@@ -126,7 +127,7 @@ def _run_autotune_cli(args) -> None:
     if args.reset:
         removed = db.reset_tuning()
         print(f"Histórico de auto-tuning apagado ({removed} registo(s)).")
-    export = args.export or (Path(args.samples) / DEFAULT_EXPORT_NAME)
+    export = args.export or (train_dir() / DEFAULT_EXPORT_NAME)
     print(
         f"AstroFrame — auto-tuning contra {args.samples} (orçamento {args.budget:g}s, "
         f"seed {args.seed}, recozimento {'ligado' if args.anneal else 'desligado'})"
@@ -149,7 +150,10 @@ def _run_autotune_cli(args) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="astroframe",
-        description="AstroFrame — estabilização geométrica e melhoria automática de eclipses.",
+        description=(
+            "AstroFrame — estabilização geométrica e melhoria automática de "
+            "astrofotografias e astrovídeos."
+        ),
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -226,7 +230,7 @@ def build_parser() -> argparse.ArgumentParser:
     autotune.add_argument(
         "--export",
         default=None,
-        help=f"Ficheiro JSON com a configuração otimizada (omissão: <samples>/{DEFAULT_EXPORT_NAME})",
+        help=f"Ficheiro JSON com a configuração otimizada (omissão: Logs/train/{DEFAULT_EXPORT_NAME})",
     )
     autotune.add_argument(
         "--reset",
@@ -242,6 +246,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    setup_logging("astroframe.log")
 
     try:
         if args.command == "serve":

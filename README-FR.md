@@ -1,23 +1,23 @@
 # AstroFrame
 
-Stabilisation géométrique et amélioration automatique de photos et vidéos d'éclipses solaires et lunaires.
+Stabilisation géométrique et amélioration automatique d'astrophotographies et d'astrovidéos — photos et vidéos du Soleil, de la Lune, de planètes, de comètes et d'autres astres.
 
 ![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue) ![License MIT](https://img.shields.io/badge/license-MIT-green)
 
 ## Fonctionnalités
 
-- **Stabilisation par géométrie** — détecte le disque du Soleil/de la Lune (`cv2.HoughCircles` + repli par contours + raffinement par centroïde d'intensité) et réaligne chaque frame pour garder l'éclipse toujours au centre exact, sans bords noirs.
-- **Amélioration automatique** — CLAHE dans l'espace LAB (sans brûler la luminosité), débruitage Non-Local Means (utile pour l'ISO élevé) et masquage de netteté (unsharp) pour mettre en évidence le limbe de la Lune.
+- **Stabilisation par géométrie** — détecte le disque de l'astre (`cv2.HoughCircles` + repli par contours + raffinement par centroïde d'intensité) et réaligne chaque frame pour garder l'astre toujours au centre exact, sans bords noirs.
+- **Amélioration automatique** — CLAHE dans l'espace LAB (sans brûler la luminosité), débruitage Non-Local Means (utile pour l'ISO élevé) et masquage de netteté (unsharp) pour mettre en évidence le limbe de l'astre.
 - **Lucky imaging** — rejet des frames floues par variance du Laplacien, avec un seuil estimé statistiquement à partir de la vidéo elle-même.
 - **Stacking** — combinaison (médiane ou moyenne) des N meilleures frames, alignées par centrage, pour réduire le bruit.
 - **Anti-tremblement temporel** — lissage du centroïde (EMA) et réutilisation du dernier déplacement valide quand une frame n'a pas de détection.
-- **Détection de disques multiples** — en plus du disque principal, les **reflets** sont détectés (Hough + contours) ; le polissage supprime les reflets et la vidéo en direct les montre en rouge.
-- **Polissage et évaluation automatique** — `polish_image()` ajoute de la luminosité au disque en gardant la couronne ; `score_image()` attribue des **étoiles (0–5)** au résultat (bruit, contraste, taille et couleur de la couronne).
+- **Détection de disques multiples** — en plus du disque principal, les **disques secondaires** (corps passant devant l'astre principal, p. ex. la Lune devant le Soleil) et les **reflets** de l'objectif sont détectés (Hough + contours) ; le polissage supprime les reflets et la vidéo en direct les montre en rouge.
+- **Polissage et évaluation automatique** — `polish_image()` ajoute de la luminosité au disque en gardant la couronne/le limbe ; `score_image()` attribue des **étoiles (0–5)** au résultat (bruit, contraste, taille et couleur de la couronne).
 - **Calibration par exemples** — interface desktop native (`python calibrate.py`) qui charge les photos et vidéos de `samples/`, permet de **dessiner des cercles/ellipses à la main** (clic crée, glisser déplace, poignées redimensionnent) lors d'une 1re passe, activer la **détection automatique** à la 2e pour remplir/valider les échantillons restants, et compare tout au ground truth sur tous les échantillons (rappel, précision, IoU, erreurs + suggestions de paramètres).
 - **Validation et entraînement de la détection** — `validator.py` (fenêtre desktop native) parcourt les échantillons, montre la détection avec zoom/pan, et apprend en **récompensant et punissant 7 paramètres du détecteur** forme par forme contre le guide manuel ; l'**entraînement automatique** (`--auto`) re-détecte en séries jusqu'à 100 % et exporte les **poids entraînés** pour le système réel.
 - **Apprentissage par feedback** — chaque exécution est stockée en SQLite ; en plus de l'évaluation automatique, vous pouvez évaluer manuellement (0–5 étoiles) et AstroFrame **ajuste les sliders automatiquement** à la prochaine exécution avec le même profil de caméra, en montrant l'historique/journal dans l'interface elle-même.
 - **Auto-réglage** — `astroframe autotune` **optimise tous les paramètres** de détection et d'amélioration contre les échantillons de `samples/` (évaluation par proxy : IoU des disques détectés vs. le ground truth de `calibration.json`, avec pénalités pour les disques en trop/manquants, + étoiles). Montée de colline **déterministe et bornée** (momentum, pas adaptatifs, recuit facultatif, budget de temps) qui ne sort jamais des gammes sûres du registre ; le résultat est enregistré par profil dans la base d'apprentissage et **appliqué automatiquement** aux exécutions suivantes.
-- **IA légère LSTM/CNN (NumPy pur)** — une cellule LSTM implémentée à la main prédit le vecteur d'ajustement suivant (auto-réglage) et la trajectoire du disque (anti-tremblement) ; une petite CNN apprend un rehaussement résiduel (suppression du bruit/smearing) et un classifieur disque/bruit qui filtre les faux positifs de la détection. Modèles `.npz` versionnés dans `~/.astroframe/`.
+- **IA légère LSTM/CNN (NumPy pur)** — une cellule LSTM implémentée à la main prédit le vecteur d'ajustement suivant (auto-réglage) et la trajectoire du disque (anti-tremblement) ; une petite CNN apprend un rehaussement résiduel (suppression du bruit/smearing) et un classifieur disque/bruit qui filtre les faux positifs de la détection. Modèles `.npz` versionnés dans `Logs/weights/`.
 - **Interface Gradio** — trois onglets : **Image** (Avant/Après, sliders, zoom sur la couronne/le limbe), **Vidéo** (traitement en direct avec les disques détectés, aperçu final à frames espacées et exportation facultative) et **Auto-tune** (réglage automatique des paramètres contre les échantillons, avec rapport et configuration résultante). Au chargement d'une vidéo, les **métadonnées** sont lues (ffprobe/OpenCV/EXIF) et les **paramètres sont suggérés automatiquement** (ISO → débruitage, résolution → rayons du détecteur, bitrate → compression), tout en restant modifiables.
 - **CLI** — lot de photos, vidéos (stabiliser/améliorer/stack), auto-réglage (`autotune`), journaux et barre de progression.
 
@@ -104,7 +104,7 @@ compare la détection automatique avec le ground truth sur tous les échantillon
 ## Développement
 
 ```bash
-pytest                      # 558 tests (pixel tests avec images synthétiques)
+pytest                      # 649 tests (pixel tests avec images synthétiques)
 pytest --cov=astroframe     # couverture (100 % du paquet)
 ruff check .                # lint
 ruff format .               # formatage

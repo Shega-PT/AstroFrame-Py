@@ -81,10 +81,12 @@ polish_image(image, detection, config=None) -> np.ndarray
 ```
 
 - **Per-body polishing**: detects all disks (`find_all_disks`), separates
-  eclipse companions (center inside the largest body) from lens reflections
+  secondary disks (a body passing in front of a primary disk, e.g. the Moon in
+  front of the Sun; center inside the largest body) from lens reflections
   (center outside), enhances **each body individually** (`_astro_boost`:
   local contrast stretching + `polish.brightness`; dark and uniform
-  silhouettes — like the Moon in eclipse — are preserved intact) and
+  silhouettes — like a concentric secondary disk (e.g. the Moon in front of
+  the Sun) — are preserved intact) and
   **recomposes seamlessly** by mask blending with feathering (`_band_mask` +
   `_astro_region`): the cut line `corona_scale × radius` feathers the ring
   into the background and body overlaps are the smooth average of the
@@ -258,7 +260,7 @@ class CalibrationItem:
     height: int
     circles: list[DiskDetection] = []   # manual ground truth
 
-class CalibrationStore(path):           # JSON v1 (samples/calibration.json)
+class CalibrationStore(path):           # JSON v1 (Logs/train/calibration.json; samples/calibration.json as fallback)
     .load() -> None                     # idempotent; unreadable/version -> empty
     .save() -> None
     .upsert_item(key, item) -> None     # writes immediately
@@ -342,7 +344,7 @@ def run_autotune_tab(samples_dir, budget, params, anneal, register, config=None)
   `(live_rgb, preview_rgb, out_video_path_or_None, status, progress, rating_html,
   run_state, log_html)` — `live` is the original frame in real time with the
   detected disks (`_draw_disks`: **green** = largest body, **yellow** =
-  eclipse companions, **red** = reflections — separated by `_split_disks`,
+  secondary disks, **red** = reflections — separated by `_split_disks`,
   which uses the disk center vs. the radius of the largest body), `preview` is
   the final result shown only at spaced frames (`_preview_every`), the other
   fields with `None`/fraction in the middle of the pass. Without a detected
@@ -529,7 +531,7 @@ tuning_table_lines(result) -> list[str]
   (`astroframe autotune`) and the Auto-tune tab both call it.
 - `export_trained_config` writes a JSON with the effective `params`, the
   `deltas`, the proxy `report` and a `stabilizer` section (compatible with
-  the previous export); the CLI writes `samples/trained_config.json` by
+  the previous export); the CLI writes `Logs/train/trained_config.json` by
   default.
 
 ### `ai.lstm` (temporal learning)
@@ -556,7 +558,7 @@ class LSTMTuner(n_hidden=24, seed=42):
     .fit(history, epochs=200, lr=0.05, seq_len=8, val_fraction=0.2,
          patience=6) -> FitHistory
     .predict_next_delta(history, seq_len=8) -> dict[str, float]  # {} without data
-    .save(path=None) -> Path            # ~/.astroframe/lstm.npz
+    .save(path=None) -> Path            # Logs/weights/lstm.npz
     .load(path=None) -> LSTMTuner | None
 
 class TrajectoryPredictor(maxlen=8, use_lstm=False, model_path=None):
@@ -581,7 +583,7 @@ trajectory_model_path(path=None) -> Path
   compatible model exists. Used by `AntiJitterStabilizer` when
   `ai.lstm_trajectory`; without history it returns `None` — nothing changes.
 - Models are saved as **versioned `.npz`** files
-  (`~/.astroframe/lstm.npz` by default); a corrupt or wrong-version file
+  (`Logs/weights/lstm.npz` by default); a corrupt or wrong-version file
   loads as `None` (silent fallback).
 
 ### `ai.cnn` (small convolutional network)
@@ -628,8 +630,8 @@ class DiskFilter(model=None, model_path=None):
   negative patches (cross-entropy). `DiskFilter` scores each detection
   (`confidence`) and `find_all_disks` drops candidates below
   `ai.disk_filter` (0–1) — it **never empties** the detected list.
-- Models: `~/.astroframe/enhancer_cnn.npz` and
-  `~/.astroframe/disk_filter.npz` (versioned `.npz`; corrupt or wrong
+- Models: `Logs/weights/enhancer_cnn.npz` and
+  `Logs/weights/disk_filter.npz` (versioned `.npz`; corrupt or wrong
   version → silent fallback).
 
 ### `ai.score` (automatic rating)
@@ -690,7 +692,7 @@ class FeedbackDB(path=None):               # SQLite with locking retry (WAL)
     .reset_tuning() -> int                             # clears the tuning table
 ```
 
-- SQLite database at `~/.astroframe/feedback.db` (or `$ASTROFRAME_FEEDBACK_DB`);
+- SQLite database at `Logs/logs/system/feedback.db` (or `$ASTROFRAME_FEEDBACK_DB`);
   created on first use, with retry on a locked base and `history_limit` per
   profile. The `tuning` table stores the auto-tuning runs (append-only:
   base params, deltas, report, source).

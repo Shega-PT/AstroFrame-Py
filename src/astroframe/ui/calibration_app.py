@@ -35,6 +35,7 @@ from astroframe.calibration.store import CalibrationItem, CalibrationStore
 from astroframe.calibration.validate import suggest_parameters, validate_all
 from astroframe.config import AstroFrameConfig
 from astroframe.core.stabilizer import find_all_disks
+from astroframe.paths import calibration_json
 from astroframe.ui.gradio_app import _from_pipeline
 
 logger = logging.getLogger(__name__)
@@ -143,7 +144,7 @@ def save_item_circles(
 
 
 def _calibration_path(samples_dir: str) -> Path:
-    return _samples_dir_to_root(samples_dir) / "calibration.json"
+    return calibration_json(samples_dir)
 
 
 def shape_choices(editor_value: dict | None) -> list[str]:

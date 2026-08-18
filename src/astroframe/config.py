@@ -136,14 +136,16 @@ class ScoreConfig:
 class FeedbackConfig:
     """Aprendizagem por estrelas: recompensa/punição persistentes.
 
-    `db_path` aponta para a base local (SQLite) onde cada utilização é
-    registada como uma linha (log de ajustes: o que mudou, como e porquê).
-    `learning_rate` é a fração do delta aplicado por execução e
-    `user_weight` o multiplicador quando o utilizador avalia manualmente.
+    `db_path` aponta para a base local (SQLite, `Logs/logs/system/` por
+    omissão — caminho relativo resolve contra a raiz de dados) onde cada
+    utilização é registada como uma linha (log de ajustes: o que mudou,
+    como e porquê). `learning_rate` é a fração do delta aplicado por
+    execução e `user_weight` o multiplicador quando o utilizador avalia
+    manualmente.
     """
 
     enabled: bool = True
-    db_path: str = "~/.astroframe/feedback.db"
+    db_path: str = "logs/system/feedback.db"
     learning_rate: float = 0.3
     user_weight: float = 2.0
     history_limit: int = 12

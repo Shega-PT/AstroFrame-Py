@@ -2,7 +2,7 @@
 
 Em vez de estabilizar o fundo (escuro ou uniforme), o algoritmo deteta o
 centroide do disco em cada frame (HoughCircles com fallback por contornos)
-e translada a imagem para manter o eclipse no centro exato. Em vídeos com
+e translada a imagem para manter o astro no centro exato. Em vídeos com
 trepidação, `AntiJitterStabilizer` suaviza o centroide ao longo do tempo e
 reutiliza o último deslocamento válido quando um frame não tem deteção.
 """
@@ -35,7 +35,8 @@ _MIN_DIST_RATIO = 0.1
 _SENSITIVITY_PARAM2_FACTOR = 0.6
 
 # Contraste mínimo do bordo interior (perfil radial) para aceitar um
-# companheiro concêntrico (Lua em eclipse total) — evita falsos positivos
+# disco secundário concêntrico (ex.: a Lua diante do Sol) — evita falsos
+# positivos
 # com o limb darkening do Sol ou pontos brilhantes internos.
 _MIN_RING_CONTRAST = 25.0
 
@@ -104,10 +105,10 @@ def _derived_min_dist(height: int, width: int) -> int:
     incluindo o "envelope" que envolve o Sol e os planetas colados a ele) e
     impede que um deles se passe pelo disco principal com um raio inflado.
 
-    Discos realmente separados (planetas, ghosts, companheiros excêntricos)
-    têm centros mais afastados e não são afetados; a Lua em eclipse **total**
-    (centros coincidentes) é encontrada pelo passe concêntrico
-    (`_concentric_companion`), não pelo Hough.
+    Discos realmente separados (planetas, ghosts, discos secundários
+    excêntricos) têm centros mais afastados e não são afetados; um disco
+    secundário concêntrico (ex.: a Lua diante do Sol, centros coincidentes) é
+    encontrado pelo passe concêntrico (`_concentric_companion`), não pelo Hough.
     """
     return max(60, int(min(height, width) * _MIN_DIST_RATIO))
 
@@ -127,7 +128,7 @@ def find_all_disks(image: np.ndarray, config: AstroFrameConfig | None = None) ->
 
     O primeiro é o astro maior (Sol); os seguintes podem ser:
 
-    - **companheiros de eclipse** — círculos interiores com raio próprio
+    - **discos secundários** — círculos interiores com raio próprio
       (ex.: a Lua a entrar); a distância mínima entre centros é derivada da
       resolução (pequena), por isso não suprime círculos concêntricos;
     - **planetas alinhados** — discos separados de tamanhos muito diferentes;
@@ -203,9 +204,9 @@ def find_all_disks(image: np.ndarray, config: AstroFrameConfig | None = None) ->
             continue
         unique.append(disk)
 
-    # Companheiro concêntrico (eclipse total): Hough suprime círculos com o
-    # mesmo centro, por isso só quando o disco primário é o único encontrado
-    # se procura a Lua no perfil radial do Sol.
+    # Disco secundário concêntrico (ex.: a Lua diante do Sol): Hough suprime
+    # círculos com o mesmo centro, por isso só quando o disco primário é o
+    # único encontrado se procura a Lua no perfil radial do Sol.
     if len(unique) == 1:
         companion = _concentric_companion(blurred, unique[0], min_radius, cfg, scale)
         if companion is not None:
@@ -232,8 +233,8 @@ def _is_occluded_artifact(
     gray: np.ndarray, candidate: DiskDetection, kept: DiskDetection, scale: float, cfg
 ) -> bool:
     """Candidato quase totalmente dentro de um disco já aceite (interior ao
-    astro maior) que **não é um astro real**: um companheiro de eclipse (a
-    Lua) é muito mais escuro que o anel à sua volta; um círculo deitado pelos
+    astro maior) que **não é um astro real**: um disco secundário (a Lua) é
+    muito mais escuro que o anel à sua volta; um círculo deitado pelos
     dois bordos (Sol+Lua na mesma deteção) tem contraste fraco e é descartado.
 
     `cfg.occluded_ring` é o raio do anel de comparação (× raio do candidato) e
@@ -284,8 +285,8 @@ def _is_occluded_artifact(
 def _concentric_companion(
     blurred: np.ndarray, primary: DiskDetection, min_radius: int, cfg, scale: float
 ) -> DiskDetection | None:
-    """Companheiro concêntrico do disco primário (ex.: Lua em eclipse total
-    ou quase total, centro a poucos px do astro maior).
+    """Disco secundário concêntrico do disco primário (ex.: a Lua diante do
+    Sol, centro a poucos px do astro maior).
 
     O Hough suprime círculos com o MESMO centro (ou centro mais próximo que
     `min_dist`), por isso um disco interior centrado no Sol é invisível a
@@ -297,7 +298,7 @@ def _concentric_companion(
       depressão, não um centro brilhante com mancha);
     - o contraste é forte (`_MIN_RING_CONTRAST`).
 
-    O raio do companheiro é o bordo de subida após a depressão (para um
+    O raio do disco secundário é o bordo de subida após a depressão (para um
     disco excentricamente centrado, a transição é suave e o bordo fica
     próximo do raio real + excentricidade).
 

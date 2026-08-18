@@ -50,6 +50,7 @@ from astroframe.calibration.store import CalibrationItem, CalibrationStore
 from astroframe.calibration.validate import suggest_parameters, validate_all
 from astroframe.config import AstroFrameConfig
 from astroframe.core.stabilizer import DiskDetection, find_all_disks
+from astroframe.paths import calibration_json
 
 logger = logging.getLogger(__name__)
 
@@ -806,7 +807,7 @@ def build_app(
     """Constrói a janela (sem `mainloop`), para testes e para `run`."""
     config = AstroFrameConfig.from_yaml(config_path) if config_path else AstroFrameConfig()
     samples = scan_samples(samples_dir)
-    store = CalibrationStore(Path(samples_dir) / "calibration.json")
+    store = CalibrationStore(calibration_json(samples_dir))
     return CalibrationTkApp(root, samples, store, config, samples_root=samples_dir)
 
 

@@ -88,9 +88,9 @@ def _draw_detection(frame: np.ndarray, detection: DiskDetection | None) -> np.nd
 def _split_disks(
     disks: list[DiskDetection], primary: DiskDetection | None
 ) -> tuple[list[DiskDetection], list[DiskDetection]]:
-    """Separa os discos em companheiros de eclipse e reflexos da lente.
+    """Separa os discos em discos secundários e reflexos da lente.
 
-    Um companheiro (ex.: a Lua a entrar no Sol) tem o centro **dentro** do
+    Um disco secundário (ex.: a Lua diante do Sol) tem o centro **dentro** do
     astro maior; um reflexo (ghost da lente) está afastado dele.
     """
     companions: list[DiskDetection] = []
@@ -112,8 +112,8 @@ def _draw_disks(
     reflections: list[DiskDetection] | tuple[DiskDetection, ...] | None = None,
     companions: list[DiskDetection] | tuple[DiskDetection, ...] | None = None,
 ) -> np.ndarray:
-    """Cópia do frame com TODOS os discos: astro maior a verde, companheiros
-    de eclipse a amarelo e reflexos a vermelho.
+    """Cópia do frame com TODOS os discos: astro maior a verde, discos
+    secundários a amarelo e reflexos a vermelho.
 
     `primary`/`reflections`/`companions` usam as coordenadas da própria `frame`.
     """
@@ -499,10 +499,11 @@ def run_autotune_tab(
 def build_app(config: AstroFrameConfig | None = None) -> gr.Blocks:
     config = config or AstroFrameConfig()
 
-    with gr.Blocks(title="AstroFrame — Eclipse Auto-Enhancer") as demo:
-        gr.Markdown("# 🌒 AstroFrame — Eclipse Auto-Enhancer")
+    with gr.Blocks(title="AstroFrame — Astro Auto-Enhancer") as demo:
+        gr.Markdown("# 🌒 AstroFrame — Astro Auto-Enhancer")
         gr.Markdown(
-            "Estabilização geométrica e melhoria automática de fotos e frames de eclipses. "
+            "Estabilização geométrica e melhoria automática de fotos e vídeos de astros "
+            "(Sol, Lua, planetas, cometas). "
             "Cada utilização é avaliada (0–5 estrelas) e registada no banco local de "
             "aprendizagem — o sistema ajusta-se automaticamente a cada execução."
         )

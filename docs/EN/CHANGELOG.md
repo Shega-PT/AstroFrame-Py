@@ -5,6 +5,88 @@ All notable changes to AstroFrame will be documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and versioning [SemVer](https://semver.org/).
 
+## [0.8.0] - 2026-08-18
+
+### Added
+
+- **Automatic training with detection CNN** (`validator.py`) — in automatic
+  validation (`--auto` with `--cnn`), disk patches are collected every series
+  and the `DiskFilter` CNN is retrained between series:
+  - `cnn_positives` (guide circles) and `cnn_negatives` (rejected shapes +
+    deterministic random crops excluded by IoU) collected per round;
+  - the next series judges with the new model (`--cnn-threshold`); the result
+    is compared with the **champion** stored in the database — if strictly
+    better it is promoted (`disk_filter.npz` updated) and the next series
+    warm-starts from the champion's weights;
+  - auto-training window with **Train CNN** checkbox and a CNN section in the
+    final report; `STATE_VERSION=2` (`cnn_series`, `cnn_positives`,
+    `cnn_negatives`) with v1 state-file compatibility;
+  - new CLI flags: `--epochs`, `--cnn-off`, `--cnn-threshold`.
+- **Residual CNN trainer** (`enhancer_trainer.py`) — standalone tool to train
+  and validate the image enhancement:
+  - side-by-side GUI (no-CNN vs with-CNN) with **Valid/Rejected** judgement
+    (Valid stores input→output pairs; Rejected stores input→input);
+  - **Train now** trains the residual with the accumulated pairs (warm-start
+    from the champion), compares by `mean_delta` and promotes if better
+    (`~/.astroframe/enhancer_cnn.npz`);
+  - CLI with `--check`, `--auto` (synthetic-degradation series),
+    `--samples/--epochs/--seed/--export/--state/--reset-state/--config`.
+- **Wider learning database** (`astroframe/ai/feedback.py`) — new `logs`
+  table (per-component event history) and `models` table (NN artifacts with
+  metric, champion and series history).
+
+### Security
+
+- Training AI stays off by default (`--cnn-off` in automatic series,
+  `ai.disk_filter`/`ai.cnn_enhance` still disabled by default); missing or
+  corrupted models degrade silently and the judgement never empties the
+  detected list.
+
+### Tests
+
+- **649 tests, 100% coverage** of `src/astroframe/`, `validator.py` and
+  `enhancer_trainer.py` — new suites `tests/test_enhancer_trainer.py` (34)
+  and `tests/test_enhancer_trainer_ui.py` (10), extended
+  `tests/test_validator.py` (69), `tests/test_validator_ui.py` (44) and
+  `tests/test_feedback.py` (32); the `_ai_isolado` conftest fixture isolates
+  DB, models and canonical paths per test; `ruff check` clean.
+
+### Documentation
+
+- PT/EN/FR docs updated: automatic validation with CNN, residual CNN
+  trainer, `logs`/`models` tables and champion logic.
+
+### Data infrastructure (`Logs/`)
+
+- New folder layout at the repository root, replacing the old paths under
+  `~/.astroframe/` and `samples/`:
+  - `Logs/weights/` — canonical models (`disk_filter.npz`,
+    `enhancer_cnn.npz`, `lstm.npz`) with `Logs/weights/staging/` for the
+    round candidates;
+  - `Logs/train/` — training artifacts by default: `calibration.json`
+    (global ground truth, falling back to `samples/calibration.json`),
+    `validator_state.json`, `enhancer_state.json`, `trained_config.json`;
+  - `Logs/logs/ia/` — network round reports (`disk_filter_round_N.json`,
+    `enhancer_round_N.json`);
+  - `Logs/logs/system/` — rotating system logs (1 MiB × 3) and
+    `feedback.db`;
+  - new module `src/astroframe/paths.py` (accessors + `migrate_legacy()`,
+    which copies legacy artifacts from `~/.astroframe/` and
+    `samples/calibration.json` once, without deleting the source; the
+    `ASTROFRAME_DATA_DIR` env var redirects the root) and file logging in
+    every entry point (`main`, `calibrate`, `validator`,
+    `enhancer_trainer`, CLI); `.gitignore` now ignores `Logs/**` with
+    `.gitkeep` exceptions.
+
+### Documentation (astro-centric)
+
+- Documentation and code strings rewritten to be **astro-centric**: the
+  protagonists are celestial bodies (Sun, Moon, planets, comets, stars) in
+  astrophotographs and astrovideos; phenomena (eclipses, transits,
+  occultations) now appear only as contextual examples; "eclipse companion"
+  → "secondary disk"; `pyproject.toml` description/keywords, PT/EN/FR
+  READMEs, `docs/PT|EN|FR/*` and `samples/README.md` updated.
+
 ## [0.7.0] - 2026-08-17
 
 ### Added

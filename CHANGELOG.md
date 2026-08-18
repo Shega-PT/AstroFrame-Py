@@ -5,6 +5,92 @@ Todas as mudanças notáveis do AstroFrame serão documentadas neste ficheiro.
 O formato segue [Keep a Changelog](https://keepachangelog.com/pt-PT/1.1.0/),
 e o versionamento [SemVer](https://semver.org/lang/pt-BR/).
 
+## [0.8.0] - 2026-08-18
+
+### Adicionado
+
+- **Treino automático com CNN de deteção** (`validator.py`) — na validação
+  automática (`--auto`/`--auto-train` com `--cnn`), os patches dos discos são
+  recolhidos a cada série e a CNN `DiskFilter` é retreinada entre séries:
+  - recolha de `cnn_positives` (círculos do guia) e `cnn_negatives` (formas
+    rejeitadas + recortes aleatórios determinísticos, com exclusão por IoU);
+  - a série seguinte julga com o novo modelo (`--cnn-threshold`); o
+    resultado é comparado com o **campeão** registado no banco — se
+    estritamente melhor é promovido (`disk_filter.npz` atualizado e a
+    série seguinte faz warm-start dos pesos do campeão);
+  - janela de treino auto com checkbox **Treinar CNN** e secção CNN no
+    relatório final; estado `STATE_VERSION=2` (`cnn_series`,
+    `cnn_positives`, `cnn_negatives`) com compatibilidade de leitura v1;
+  - CLI nova: `--epochs`, `--cnn-off` e `--cnn-threshold`.
+- **Treinador da CNN residual** (`enhancer_trainer.py`) — ferramenta
+  autónoma para treinar e validar a melhoria de imagem:
+  - GUI lado a lado (sem-CNN vs com-CNN) com julgamento **Válido/Rejeitado**
+    (Válido guarda o par entrada→saída; Rejeitado guarda entrada→entrada);
+  - **Treinar agora** treina a residual com os pares acumulados
+    (warm-start do campeão), compara com o campeão por `mean_delta` e
+    promove se melhor (`~/.astroframe/enhancer_cnn.npz`);
+  - CLI `enhancer_trainer.py` com `--check`, `--auto` (séries com
+    degradação sintética e treino), `--samples/--epochs/--seed/--export/
+    --state/--reset-state/--config`.
+- **Banco de aprendizagem alargado** (`src/astroframe/ai/feedback.py`) —
+  nova tabela `logs` (histórico de eventos por componente) e tabela
+  `models` (artefactos NN com métrica, campeão e histórico de séries).
+- **CLI nova** — `validator --auto` agora suporta treino da CNN de
+  deteção (`--cnn`, `--epochs`, `--cnn-threshold`).
+
+### Segurança
+
+- IA de treino desligada por omissão (`--cnn-off` em séries automáticas,
+  `ai.disk_filter`/`ai.cnn_enhance` continuam desligados por omissão);
+  modelos em falta/corrompidos degradam silenciosamente e o julgamento
+  nunca esvazia a lista detetada.
+
+### Testes
+
+- **649 testes, cobertura a 100%** de `src/astroframe/`, `validator.py` e
+  `enhancer_trainer.py` — novas suítes `tests/test_enhancer_trainer.py`
+  (34) e `tests/test_enhancer_trainer_ui.py` (10), extensões de
+  `tests/test_validator.py` (69), `tests/test_validator_ui.py` (44) e
+  `tests/test_feedback.py` (32); fixture `_ai_isolado` no conftest isola
+  DB, modelos e caminhos canónicos por teste; `ruff check` limpo.
+
+### Documentação
+
+- Docs PT/EN/FR atualizadas: validação automática com CNN, treinador da
+  CNN residual, tabelas `logs`/`models` e lógica de campeão.
+
+### Infraestrutura de dados (`Logs/`)
+
+- Nova estrutura de pastas na raiz do repositório, substituindo os
+  caminhos antigos em `~/.astroframe/` e `samples/`:
+  - `Logs/weights/` — modelos canónicos (`disk_filter.npz`,
+    `enhancer_cnn.npz`, `lstm.npz`) com `Logs/weights/staging/` para os
+    candidatos de cada ronda de treino;
+  - `Logs/train/` — artefactos de treino por omissão: `calibration.json`
+    (ground truth global, com fallback para `samples/calibration.json`),
+    `validator_state.json`, `enhancer_state.json` e `trained_config.json`;
+  - `Logs/logs/ia/` — relatórios de ronda das redes (`disk_filter_round_N.json`,
+    `enhancer_round_N.json`);
+  - `Logs/logs/system/` — logs do sistema (rotativos, 1 MiB × 3) e
+    `feedback.db`;
+  - novo módulo `src/astroframe/paths.py` (acessores + `migrate_legacy()`,
+    que copia uma vez os artefactos antigos de `~/.astroframe/` e
+    `samples/calibration.json` sem apagar a origem; env
+    `ASTROFRAME_DATA_DIR` para redirecionar a raiz) e logging de ficheiro
+    em todas as entradas (`main`, `calibrate`, `validator`,
+    `enhancer_trainer`, CLI); `.gitignore` passa a ignorar `Logs/**` com
+    exceção para os `.gitkeep`.
+
+### Documentação (astro-cêntrica)
+
+- Documentação e mensagens do código reformuladas para serem
+  **astro-cêntricas**: os protagonistas são os astros (Sol, Lua, planetas,
+  cometas, estrelas) em astrofotografias e astrovídeos; fenómenos
+  (eclipses, trânsitos, ocultações) passam a aparecer apenas como exemplos
+  de contexto; "companheiro de eclipse" → "disco secundário"; descrição e
+  keywords do `pyproject.toml`, README PT/EN/FR, `docs/PT|EN|FR/*` e
+  `samples/README.md` atualizados.
+
 ## [0.7.0] - 2026-08-17
 
 ### Adicionado

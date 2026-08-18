@@ -20,6 +20,7 @@ import validator
 from astroframe.calibration.store import CalibrationItem, CalibrationStore
 from astroframe.calibration.validate import validate_all
 from astroframe.core.stabilizer import DiskDetection
+from astroframe.paths import train_dir
 from tests.helpers import make_disk_image
 
 CIRCLE = DiskDetection(300, 140, 90)
@@ -422,7 +423,7 @@ def test_run_auto_headless_exporta(root, tmp_path, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "treino automático (1 amostras, 2 série(s)" in out
     assert "IoU mínimo 0.95" in out
-    data = json.loads((samples / validator.DEFAULT_EXPORT_NAME).read_text(encoding="utf-8"))
+    data = json.loads((train_dir() / validator.DEFAULT_EXPORT_NAME).read_text(encoding="utf-8"))
     # delta 5.0 menos 2 recompensas de 0.25 (uma por série) = 4.5 → 34
     assert data["stabilizer"]["param2"] == 34
 
@@ -434,7 +435,7 @@ def test_main_cli_check_auto_reset_e_erro(root, tmp_path, monkeypatch, capsys):
 
     assert validator.main(args + ["--check"]) == 0
     assert validator.main(args + ["--auto", "--series", "1"]) == 0
-    assert (samples / validator.DEFAULT_EXPORT_NAME).exists()
+    assert (train_dir() / validator.DEFAULT_EXPORT_NAME).exists()
 
     assert validator.main(args + ["--reset-state", "--check"]) == 0
     out = capsys.readouterr().out
@@ -867,4 +868,34 @@ def test_auto_train_window_mensagens_diretas(root, tmp_path, detect_one):
         assert "interrompido" in win.status.get()
     finally:
         win.top.destroy()
+        app.root.destroy()
+
+
+def test_auto_train_window_cnn_real_treina_e_promove(root, tmp_path, fake_final_window, monkeypatch):
+    """Séries reais com patches suficientes: a CNN treina, é promovida e o
+    relatório final mostra o balanço da CNN."""
+    samples = make_samples_dir(tmp_path, n=2)
+    app = validator.build_app(root, samples_dir=str(samples), state_path=str(samples / "v.json"))
+    win = validator.AutoTrainWindow(app)
+    try:
+        win.series_var.set(1)
+        win.start()
+        deadline = time.monotonic() + 60.0
+        while time.monotonic() < deadline and win._running:
+            win._poll()
+            root.update()
+            time.sleep(0.01)
+        win._poll()
+        root.update()
+        assert not win._running
+        assert "concluído" in win.status.get()
+        state = app.state
+        assert len(state.cnn_series) == 1
+        assert state.cnn_series[0]["promoted"] is True
+        report_text = win.report.get("1.0", "end")
+        assert "CNN de deteção:" in report_text
+        assert "PROMOVIDA" in report_text
+        assert len(fake_final_window) == 1
+    finally:
+        win._on_close()
         app.root.destroy()

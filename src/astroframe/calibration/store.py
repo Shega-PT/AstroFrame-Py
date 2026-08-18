@@ -1,11 +1,12 @@
 """Persistência do ground truth manual da calibração.
 
-O ficheiro é JSON (v1) em `samples/calibration.json` por omissão, com uma
-entrada por item de calibração:
+O ficheiro é JSON (v1), em `Logs/train/calibration.json` por omissão (com
+fallback para `samples/calibration.json` quando o ficheiro global ainda não
+existe), com uma entrada por item de calibração:
 
 ```json
 {"version": 1, "items": {
-  "eclipse.jpg": {"path": "eclipse.jpg", "kind": "image", "frame": null,
+  "sol.jpg": {"path": "sol.jpg", "kind": "image", "frame": null,
                   "width": 1920, "height": 1080,
                   "circles": [{"cx": 960, "cy": 540, "radius": 400},
                               {"cx": 200, "cy": 300, "radius": 80, "ry": 50}]}

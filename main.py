@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import sys
 
+from astroframe.paths import migrate_legacy, setup_logging
 from astroframe.ui.gradio_app import run
 
 
@@ -28,6 +29,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    migrate_legacy()
+    setup_logging("astroframe.log")
     args = build_parser().parse_args(argv)
     try:
         # O backend corre no mesmo processo do Gradio: cada clique em "Processar"

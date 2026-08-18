@@ -12,7 +12,7 @@ Le système se divise en trois étapes principales :
 
 Au lieu de tenter de stabiliser le fond (sombre ou uniforme), l'algorithme
 détecte le centroïde du Soleil/de la Lune dans chaque frame et déplace l'image
-pour garder l'éclipse toujours au centre exact de la frame.
+pour garder l'astre toujours au centre exact de la frame.
 
 Détection de forme : utilise la transformée de Hough pour les cercles
 (`cv2.HoughCircles`) ou la détection des plus grands contours
@@ -38,8 +38,8 @@ transition d'éclairage sans brûler la luminosité.
 Réduction du bruit : application du filtre Non-Local Means Denoising
 (particulièrement utile pour les photos à ISO élevé).
 
-Masquage de netteté (Unsharp Masking) : met en évidence les bords exacts de la
-Lune sur le disque solaire.
+Masquage de netteté (Unsharp Masking) : met en évidence le limbe de l'astre
+(les bords exacts du disque).
 
 ---
 
@@ -59,7 +59,7 @@ import numpy as np
 import gradio as gr
 
 
-def auto_enhance_eclipse_frame(img):
+def auto_enhance_frame(img):
     """
     Applique l'égalisation adaptative et la netteté axées sur l'astrophotographie.
     """
@@ -123,14 +123,14 @@ def process_image_pipeline(input_image):
     # 1. Centrer sur le disque solaire
     stabilized = center_and_stabilize(input_image)
     # 2. Appliquer les améliorations automatiques
-    result = auto_enhance_eclipse_frame(stabilized)
+    result = auto_enhance_frame(stabilized)
     return result
 
 
 # Interface minimale avec Gradio
-with gr.Blocks(title="Eclipse Auto-Enhancer") as demo:
-    gr.Markdown("# 🌒 Eclipse Auto-Enhancer AI System")
-    gr.Markdown("Amélioration automatique et stabilisation géométrique pour photos et frames d'éclipse.")
+with gr.Blocks(title="AstroFrame") as demo:
+    gr.Markdown("# AstroFrame — stabilisation géométrique et amélioration automatique d'astrophotographies et d'astrovidéos")
+    gr.Markdown("Stabilisation géométrique et amélioration automatique de photos et vidéos d'astres (Soleil, Lune, planètes).")
 
     with gr.Row():
         input_img = gr.Image(label="Photo/Frame originale")
@@ -220,7 +220,7 @@ usages :
   synthétiques** (`train_trajectory_model`, déterministe). Activé par
   `ai.lstm_trajectory`.
 
-Les modèles sont des `.npz` **versionnés** (`~/.astroframe/lstm.npz`) ; un
+Les modèles sont des `.npz` **versionnés** (`Logs/weights/lstm.npz`) ; un
 fichier corrompu ou de mauvaise version retombe **silencieusement** sur la
 régression linéaire — le comportement d'origine.
 
@@ -244,14 +244,34 @@ têtes sur un corps partagé :
   filtre les candidats sous le seuil — et **ne vide jamais** la liste
   détectée.
 
-Modèles : `~/.astroframe/enhancer_cnn.npz` et `~/.astroframe/disk_filter.npz`
+Modèles : `Logs/weights/enhancer_cnn.npz` et `Logs/weights/disk_filter.npz`
 (versionnés ; corrompus → repli silencieux).
+
+### Entraînement des réseaux
+
+- **CNN de détection** — l'entraînement automatique du `validator.py`
+  collecte des patches de disques à chaque série (`cnn_positives` des
+  cercles du guide, `cnn_negatives` des formes rejetées + recadrages
+  aléatoires déterministes exclus par IoU) et ré-entraîne `DiskFilter` entre
+  les séries (`--cnn`). Le résultat est comparé au **champion** de la table
+  `models` par `score` ; s'il est strictement meilleur il est promu vers le
+  chemin canonique et la série suivante fait un warm-start des poids du
+  champion.
+- **CNN résiduelle** — `enhancer_trainer.py` (GUI Valide/Rejeté ou `--auto`)
+  accumule des paires (entrée, sortie CNN) / (entrée, entrée) et appelle
+  `train_enhancer_round`, qui compare par `mean_delta` (1 − MSE) au champion
+  et promeut si meilleure.
+- Les deux entraîneurs journalisent chaque tour dans les tables `models` et
+  `logs`.
 
 ## 4.5 Boucle de feedback et intégration dans la pipeline
 
-La base SQLite (`~/.astroframe/feedback.db`, surchargeable par
+La base SQLite (`Logs/logs/system/feedback.db`, surchargeable par
 `ASTROFRAME_FEEDBACK_DB`) contient deux tables : `runs` (exécutions,
 métriques, évaluations en étoiles) et `tuning` (auto-réglages par profil).
+Depuis la v0.8.0 elle contient aussi `models` (artefacts NN : type, métrique,
+drapeau promu, statut champion, série) et `logs` (historique d'événements par
+composant).
 Au démarrage de chaque exécution, `apply_learned` **additionne les nudges
 par étoiles et les deltas d'auto-réglage** du profil — toujours clamppés par
 le registre — ou retourne la configuration inchangée s'il n'y a rien

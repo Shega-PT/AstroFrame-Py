@@ -1,18 +1,18 @@
 # AstroFrame
 
-Geometric stabilization and automatic enhancement of solar and lunar eclipse photos and videos.
+Geometric stabilization and automatic enhancement of astrophotographs and astrovideos — photos and videos of the Sun, the Moon, planets, comets and other celestial bodies.
 
 ![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue) ![License MIT](https://img.shields.io/badge/license-MIT-green)
 
 ## Features
 
-- **Geometric stabilization** — detects the Sun/Moon disk (`cv2.HoughCircles` + contour fallback + intensity-centroid refinement) and re-aligns each frame to keep the eclipse always at the exact center, without black borders.
-- **Automatic enhancement** — CLAHE in the LAB space (without blowing out the brightness), Non-Local Means denoising (useful for high ISO) and unsharp masking to highlight the Moon's limb.
+- **Geometric stabilization** — detects the celestial body's disk (`cv2.HoughCircles` + contour fallback + intensity-centroid refinement) and re-aligns each frame to keep the body always at the exact center, without black borders.
+- **Automatic enhancement** — CLAHE in the LAB space (without blowing out the brightness), Non-Local Means denoising (useful for high ISO) and unsharp masking to highlight the body's limb.
 - **Lucky imaging** — discards blurred frames by Laplacian variance, with a threshold estimated statistically from the video itself.
 - **Stacking** — combination (median or mean) of the N best frames, aligned by centering, to reduce noise.
 - **Temporal anti-jitter** — centroid smoothing (EMA) and reuse of the last valid displacement when a frame has no detection.
-- **Multiple disk detection** — besides the main disk, the **reflections** are detected (Hough + contours); the polishing removes the reflections and the live video shows them in red.
-- **Polishing and automatic rating** — `polish_image()` adds brightness to the disk while keeping the corona; `score_image()` assigns **stars (0–5)** to the result (noise, contrast, size and corona color).
+- **Multiple disk detection** — besides the main disk, **secondary disks** (bodies passing in front of the main body, e.g. the Moon in front of the Sun) and the **lens reflections** are detected (Hough + contours); the polishing removes the reflections and the live video shows them in red.
+- **Polishing and automatic rating** — `polish_image()` adds brightness to the disk while keeping the corona/limb; `score_image()` assigns **stars (0–5)** to the result (noise, contrast, size and corona color).
 - **Example-based calibration** — native desktop interface (`python calibrate.py`) that loads the photos and videos from `samples/`, lets you **draw circles/ellipses by hand** (click creates, drag moves, handles resize) in a 1st pass, turn on the **automatic detection** in the 2nd to fill/validate the remaining samples, and compares everything against the ground truth on all samples (recall, precision, IoU, errors + parameter suggestions).
 - **Detection validation and training** — `validator.py` (native desktop window) walks the samples, shows the detection with zoom/pan, and learns by **rewarding and punishing 7 detector parameters** shape by shape against the manual guide; **automatic training** (`--auto`) re-detects in series until 100% and exports the **trained weights** for the real system.
 - **Feedback learning** — every run is stored in SQLite; besides the automatic rating, you can rate manually (0–5 stars) and AstroFrame **adjusts the sliders automatically** on the next run with the same camera profile, showing the history/log in the interface itself.
@@ -24,7 +24,7 @@ Geometric stabilization and automatic enhancement of solar and lunar eclipse pho
 > **AI at a glance (v0.7.0)** — the entire AI layer is **off by default**
 > (`[tuning]` and `[ai]`) and degrades silently: the auto-tuning needs a
 > folder of samples with ground truth, and the LSTM/CNN models (pure NumPy
-> core, PyTorch optional) live in `~/.astroframe/*.npz` — when a model is
+> core, PyTorch optional) live in `Logs/weights/*.npz` — when a model is
 > missing or corrupt, the pipeline simply runs without it.
 
 ## Installation
@@ -98,7 +98,7 @@ detection with the ground truth on all samples.
 ## Development
 
 ```bash
-pytest                      # 558 tests (pixel tests with synthetic images)
+pytest                      # 649 tests (pixel tests with synthetic images)
 pytest --cov=astroframe     # coverage (100% of the package)
 ruff check .                # lint
 ruff format .               # formatting

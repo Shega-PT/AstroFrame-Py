@@ -217,6 +217,16 @@ def test_apply_learned_respeita_limite_inferior(db):
     assert adjusted.denoise.h >= _PARAM_BOUNDS["denoise.h"][0]
 
 
+def test_default_db_path_relativo_resolve_contra_data_root(monkeypatch, tmp_path):
+    from astroframe import paths
+
+    monkeypatch.delenv("ASTROFRAME_FEEDBACK_DB", raising=False)
+    monkeypatch.setenv("ASTROFRAME_DATA_DIR", str(tmp_path))
+    db = FeedbackDB()
+    assert db.path == paths.data_root() / "logs/system/feedback.db"
+    assert db.path.exists()
+
+
 def test_apply_learned_usa_banco_por_omissao(tmp_path, monkeypatch):
     monkeypatch.setenv("ASTROFRAME_FEEDBACK_DB", str(tmp_path / "default.db"))
     db = FeedbackDB()
@@ -247,3 +257,85 @@ def test_record_run_fallback_sem_historico():
     assert run.id == 7
     assert run.profile == "perfil"
     assert run.stars_calc == 3.0
+
+
+# ----------------------------------------------------------------- logs ----
+
+
+def test_db_log_grava_e_lista(db):
+    db.log("info", "validator", "série 1 concluída", {"round": 1})
+    db.log("warn", "validator", "sem patches")
+    db.log("info", "enhancer", "campeão promovido")
+    rows = db.logs()
+    assert [r["message"] for r in rows] == ["campeão promovido", "sem patches", "série 1 concluída"]
+    filtered = db.logs(component="validator")
+    assert len(filtered) == 2
+    assert filtered[0]["level"] == "warn"
+    assert filtered[0]["details"] is None
+    assert filtered[1]["details"] == {"round": 1}
+    limited = db.logs(limit=1)
+    assert len(limited) == 1
+
+
+def test_db_log_aceita_qualquer_nivel(db):
+    db.log("debug", "componente", "mensagem mínima")
+    assert len(db.logs()) == 1
+
+
+# ------------------------------------------------------------ modelos/campeão --
+
+
+def test_db_add_model_primeiro_e_campeao(db):
+    result = db.add_model("disk_filter", "/tmp/m1.npz", {"score": 80.0, "accuracy": 0.9}, dataset_size=10)
+    assert result["promoted"] is True
+    assert result["previous"] is None
+    assert result["champion"]["path"] == "/tmp/m1.npz"
+    champion = db.champion("disk_filter")
+    assert champion["metrics"]["score"] == 80.0
+    assert champion["dataset"] == 10
+    assert champion["promoted"] is True
+
+
+def test_db_add_model_so_promove_estritamente_melhor(db):
+    db.add_model("disk_filter", "/tmp/m1.npz", {"score": 80.0})
+    igual = db.add_model("disk_filter", "/tmp/m2.npz", {"score": 80.0})
+    assert igual["promoted"] is False
+    pior = db.add_model("disk_filter", "/tmp/m3.npz", {"score": 70.0})
+    assert pior["promoted"] is False
+    melhor = db.add_model("disk_filter", "/tmp/m4.npz", {"score": 90.0})
+    assert melhor["promoted"] is True
+    assert db.champion("disk_filter")["path"] == "/tmp/m4.npz"
+
+
+def test_db_add_model_metricas_por_tipo_e_campeoes_independentes(db):
+    db.add_model("disk_filter", "/tmp/d1.npz", {"score": 50.0})
+    db.add_model("enhancer", "/tmp/e1.npz", {"mean_delta": 0.5})
+    db.add_model("enhancer", "/tmp/e2.npz", {"mean_delta": 0.9})
+    assert db.champion("disk_filter")["path"] == "/tmp/d1.npz"
+    assert db.champion("enhancer")["path"] == "/tmp/e2.npz"
+
+
+def test_db_add_model_metric_alternativa(db):
+    result = db.add_model("disk_filter", "/tmp/m1.npz", {"accuracy": 0.95}, metric_name="accuracy")
+    assert result["promoted"] is True
+
+
+def test_db_add_model_metrica_em_falta_levanta(db):
+    with pytest.raises(ValueError, match="Métrica 'score' ausente"):
+        db.add_model("disk_filter", "/tmp/m1.npz", {"accuracy": 0.5})
+    with pytest.raises(ValueError, match="Métrica 'mean_delta' ausente"):
+        db.add_model("enhancer", "/tmp/e1.npz", {"mse": 0.1})
+
+
+def test_db_champion_vazio_e_por_tipo(db):
+    assert db.champion("disk_filter") is None
+    assert db.champion("desconhecido") is None
+
+
+def test_db_model_history_ordenada_desc_com_limite(db):
+    for i in range(5):
+        db.add_model("disk_filter", f"/tmp/m{i}.npz", {"score": float(i)})
+    history = db.model_history("disk_filter", limit=3)
+    assert [h["id"] for h in history] == [5, 4, 3]
+    assert history[0]["promoted"] is True
+    assert db.model_history("enhancer") == []

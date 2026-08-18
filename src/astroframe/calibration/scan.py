@@ -4,7 +4,7 @@ Cada imagem é um item de calibração; cada vídeo contribui com N frames
 amostrados de forma **determinística** (`sample_video_frames`), para que a
 validação automática seja reproduzível entre execuções. A pasta é varrida
 recursivamente e suporta qualquer organização interna (ex.: subpastas por
-tipo de astro — eclipse, lua, sol, planetas).
+tipo de astro — sol, lua, planetas, cometas).
 """
 
 from __future__ import annotations

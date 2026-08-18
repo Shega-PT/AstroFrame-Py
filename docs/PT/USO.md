@@ -64,8 +64,8 @@ A interface tem três separadores:
 
 - **Entrada** — carregar a foto/frame (formato arbitrátrio de imagem).
 - **Estabilizado** — disco centralizado, com os discos detetados desenhados:
-  **verde** = astro maior, **amarelo** = companheiros de eclipse (ex.: a Lua
-  a entrar no Sol), **vermelho** = reflexos da lente.
+  **verde** = astro maior, **amarelo** = discos secundários (ex.: a Lua
+  diante do Sol), **vermelho** = reflexos da lente.
 - **Processado** — CLAHE + denoising + nitidez + **polimento por astros**
   (cada astro realçado individualmente e remontado sem costuras; fundo = média
   do fundo original; reflexos removidos).
@@ -91,7 +91,7 @@ A interface tem três separadores:
    anteriores do mesmo perfil), mas continuam editáveis.
 2. **Processar vídeo** — enquanto a pipeline corre:
    - **Esquerda (ao vivo)** — o frame original em tempo real com os discos
-     detetados: **verde** = astro maior, **amarelo** = companheiros de eclipse,
+     detetados: **verde** = astro maior, **amarelo** = discos secundários,
      **vermelho** = reflexos da lente.
    - **Direita (resultado final)** — em frames bem espaçados, o resultado com
      todas as correções (estabilizado + CLAHE + denoising + nitidez +
@@ -107,7 +107,7 @@ A interface tem três separadores:
 ### Separador Auto-tune
 
 Otimiza **todos os parâmetros da pipeline** contra a pasta de samples
-(`samples/` + ground truth `calibration.json`) — deteção (IoU contra o guia)
+(`samples/` + ground truth em `Logs/train/calibration.json`) — deteção (IoU contra o guia)
 + melhoria (estrelas) — com uma pesquisa determinística e com orçamento de
 tempo:
 
@@ -129,7 +129,7 @@ tempo:
 ### Base de aprendizagem (onde fica guardado)
 
 As execuções (parâmetros usados, métricas e avaliações) ficam num ficheiro
-SQLite em `~/.astroframe/feedback.db`. Pode mudar o local com a variável de
+SQLite em `Logs/logs/system/feedback.db`. Pode mudar o local com a variável de
 ambiente `ASTROFRAME_FEEDBACK_DB` (por exemplo, para partilhar a aprendizagem
 entre várias máquinas). Os **resultados do auto-tuning** ficam na mesma base
 (tabela `tuning`) e são aplicados automaticamente às próximas execuções do
@@ -156,8 +156,8 @@ astroframe calibrate --samples samples       # equivalente (CLI instalada)
 - **Vídeos** (mp4/avi/mov/mkv/m4v) — cada um contribui com 8 frames amostrados
   de forma equidistante e determinística (reproduzível na validação).
 - A pasta é varrida recursivamente: organiza por assunto como quiseres
-  (eclipse, lua, sol, planetas — subpastas em `samples/images/` e
-  `samples/videos/`).
+  (sol, lua, planetas, cometas — ou fenómenos como eclipses e trânsitos —
+  em subpastas de `samples/images/` e `samples/videos/`).
 
 ### Fluxo de trabalho
 
@@ -177,7 +177,9 @@ O fluxo divide-se em **duas passagens**:
         → deslocar; **Delete** elimina a forma selecionada, setas movem 1 px
         (Shift = 10 px).
    3. **Guardar (Ctrl+S)** — grava o ground truth do item em
-      `samples/calibration.json` (ficheiro local, ignorado pelo git).
+      `Logs/train/calibration.json` (por omissão; `samples/calibration.json`
+      serve de fallback quando o global não existe — ficheiros locais,
+      ignorados pelo git).
 2. **2.ª passagem — validação (liga "Deteção automática ao carregar):**
    4. **Amostras sem ground truth** são preenchidas automaticamente pela
       deteção; as guardadas abrem exatamente como as deixaste. **Ajusta** o
@@ -197,8 +199,9 @@ O fluxo divide-se em **duas passagens**:
 ### Para que serve a calibração
 
 Os círculos manuais são o "resposta certa" que o sistema compara com a
-deteção automática. Com uma pasta variada (eclipses, Lua, Sol, planetas —
-discos grandes e pequenos, alto e baixo contraste), a validação mostra onde a
+deteção automática. Com uma pasta variada (Lua, Sol, planetas, cometas — ou
+fenómenos como eclipses — discos grandes e pequenos, alto e baixo contraste),
+a validação mostra onde a
 deteção falha e o que ajustar no `config.yaml` antes de processar o material
 real.
 
@@ -206,7 +209,7 @@ real.
 
 O `validator.py` usa esse mesmo ground truth para **afinar a deteção por
 forma**: percorre as amostras uma a uma, mostra o que o `find_all_disks`
-encontrou (disco principal + companheiros de eclipse) sobre a imagem, e
+encontrou (disco principal + discos secundários) sobre a imagem, e
 aprende a distinguir deteções corretas de falsas.
 
 ```bash
@@ -214,13 +217,15 @@ python validator.py                          # janela desktop (tkinter)
 python validator.py --check                  # relatório sem interface
 python validator.py --auto --series 3        # treino automático (3 séries)
 python validator.py --auto --iou 0.7         # exigência mínima com o guia
+python validator.py --auto --cnn --epochs 8  # treina a CNN de deteção entre séries
+python validator.py --auto --cnn-off         # desliga a CNN (omissão)
 python validator.py --reset-state --check    # recomeça do zero e verifica
 ```
 
 ### Como funciona
 
 1. **Ronda manual** — em cada amostra vês a deteção e o guia manual
-   (`calibration.json`); **Aceitar/Rejeitar** diz se a forma está certa.
+   (`Logs/train/calibration.json`); **Aceitar/Rejeitar** diz se a forma está certa.
    - Com um **preview ao detetar**: a deteção desenha-se em cima da imagem em
      tempo real antes de pedir o veredito.
 2. **Treino automático (`--auto`)** — sem janela: cada série re-deteça as
@@ -234,13 +239,25 @@ python validator.py --reset-state --check    # recomeça do zero e verifica
    e máximos e histórico de aplicação.
 4. **Relatório final** — score da deteção, pesos treinados com **tooltips ⓘ**
    a explicar cada parâmetro, e o botão **Salvar** exporta a configuração
-   treinada para `trained_config.json` (na pasta de samples), pronta a usar no
+   treinada para `Logs/train/trained_config.json` (por omissão), pronta a usar no
    sistema real.
+5. **CNN de deteção (opcional, v0.8.0)** — com `--cnn` (ou a checkbox
+   **Treinar CNN** na janela de treino auto), cada série recolhe patches dos
+   discos (positivos = círculos do guia; negativos = formas rejeitadas +
+   recortes aleatórios determinísticos com exclusão por IoU). No fim da série
+   a CNN `DiskFilter` é retreinada e a série seguinte julga com o modelo novo
+   (`--cnn-threshold`, omissão `0.5`). O resultado é comparado com o
+   **campeão** registado no banco: se estritamente melhor, promove para
+   `Logs/weights/disk_filter.npz` e a série seguinte faz warm-start dos pesos
+   do campeão. A lista detetada nunca é esvaziada pelo filtro.
 
 ### Estado
 
-- O progresso fica em `validator_state.json` (na pasta de samples, por
-  omissão): rondas, séries, histórico de pesos/deltas e o IoU mínimo atual.
+- O progresso fica em `Logs/train/validator_state.json` (por omissão):
+  rondas, séries, histórico de pesos/deltas e o IoU mínimo atual.
+- Desde a v0.8.0 o estado guarda ainda `cnn_positives`, `cnn_negatives` e
+  `cnn_series`; ficheiros de versões antigas continuam a ler-se (o treino CNN
+  começa do zero).
 - `--reset-state` apaga tudo (incluindo o histórico) e recomeça; sozinho abre
   depois a interface, combinado com `--check`/`--auto` corre sem janela.
 - `--state ficheiro.json` muda o local do estado; `--export saida.json` muda o
@@ -250,7 +267,7 @@ python validator.py --reset-state --check    # recomeça do zero e verifica
 
 [v0.7.0] Otimiza automaticamente os **parâmetros de deteção/melhoria** contra
 o material de calibração. Precisa de uma pasta de samples com ground truth
-(`samples/` + `calibration.json`, ver [Calibração](#calibração)) — sem ele o
+(`samples/` + `Logs/train/calibration.json`, ver [Calibração](#calibração)) — sem ele o
 proxy não consegue pontuar a deteção e o ajuste não tem com que comparar.
 
 ```bash
@@ -263,13 +280,13 @@ astroframe autotune --samples samples --reset       # limpa o histórico de tuni
 
 | Opção | Descrição |
 |---|---|
-| `--samples DIR` | Pasta com as amostras e `calibration.json` (por omissão `samples`) |
+| `--samples DIR` | Pasta com as amostras e `calibration.json` (por omissão `samples`; global em `Logs/train/`) |
 | `--budget N` | Orçamento de tempo do otimizador em segundos (por omissão 60) |
 | `--seed N` | Semente determinística (por omissão 42) |
 | `--no-anneal` | Desliga o recozimento (não aceita candidatos piores) |
 | `--params p1,p2` | Subconjunto de parâmetros ajustáveis (por omissão: todos os registados) |
 | `--profile NOME` | Perfil de câmara usado no banco de aprendizagem |
-| `--export FILE` | Exporta a configuração otimizada (por omissão `samples/trained_config.json`) |
+| `--export FILE` | Exporta a configuração otimizada (por omissão `Logs/train/trained_config.json`) |
 | `--reset` | Limpa o histórico de tuning do perfil antes de correr |
 | `--config FILE` | `config.yaml` base (a pesquisa parte dele) |
 
@@ -314,7 +331,30 @@ Os subcomandos completos (`astroframe --help`):
 
 A validação/treino da deteção é um script à parte (ver
 [Validação e treino da deteção](#validação-e-treino-da-deteção)):
-`python validator.py [--check|--auto|--reset-state|--iou N]`.
+`python validator.py [--check|--auto|--reset-state|--iou N|--cnn|--cnn-off|--epochs N|--cnn-threshold F]`.
+
+### Treinador da CNN residual (`enhancer_trainer.py`)
+
+[v0.8.0] Treina e valida a rede residual de melhoria de imagem
+(`Logs/weights/enhancer_cnn.npz`, usada com `ai.cnn_enhance=true`):
+
+```bash
+python enhancer_trainer.py                          # janela lado a lado (tkinter)
+python enhancer_trainer.py --check                  # relatório sem interface
+python enhancer_trainer.py --auto --series 3        # séries com degradação sintética
+python enhancer_trainer.py --auto --epochs 10 --export saida.npz
+```
+
+- Na janela, cada amostra mostra **sem-CNN vs com-CNN** lado a lado; **Válido**
+  guarda o par (entrada, saída com CNN) e **Rejeitado** guarda (entrada,
+  entrada) — a rede aprende onde não deve mexer. **Treinar agora** treina a
+  residual com os pares acumulados (warm-start do campeão), compara a
+  qualidade média com o campeão do banco e promove se melhor.
+- `--auto` gera pares por degradação sintética (ruído/desfoque) e treina em
+  série, promovendo o campeão a cada volta.
+- `--check` avalia o modelo atual contra o ground truth das amostras.
+- `--samples DIR` muda a pasta (omissão `samples`), `--state`/`--reset-state`
+  gerem o progresso, `--seed N` fixa a degradação.
 
 ### Fotografias em lote
 
@@ -401,7 +441,7 @@ Todos os campos e tipos:
 | Campo | Tipo | Padrão | Descrição |
 |---|---|---|---|
 | `enabled` | bool | `true` | Guarda avaliações e aplica o ajuste aprendido aos sliders |
-| `db_path` | str | `~/.astroframe/feedback.db` | Base SQLite com o histórico de execuções e ajustes |
+| `db_path` | str | `Logs/logs/system/feedback.db` | Base SQLite com o histórico de execuções e ajustes |
 | `learning_rate` | float | `0.3` | Fração do delta aplicado por execução |
 | `user_weight` | float | `2.0` | Multiplicador quando o utilizador avalia manualmente |
 | `history_limit` | int | `12` | Execuções recentes consideradas por perfil |
@@ -444,7 +484,7 @@ Todos os campos e tipos:
 
 ## Workflow de vídeo
 
-1. **Captura** — gravar o eclipse com a câmara estática; trepidação lenta é
+1. **Captura** — gravar o astro (ex.: o Sol ou a Lua) com a câmara estática; trepidação lenta é
    aceitável (a estabilização absoluta pelo disco compensa-a).
 2. **Pré-seleção** (opcional): `astroframe video --input clip.mp4 --mode stack --stack-n 30`
    devolve um único PNG com o melhor "instantâneo" possível.
@@ -468,5 +508,5 @@ Todos os campos e tipos:
 - **RIFE** (interpolação em saltos) é opcional e exige PyTorch; ver [API.md](API.md).
 - **IA desligada por omissão** — `tuning.enabled`, `ai.lstm_trajectory`,
   `ai.cnn_enhance` e `ai.disk_filter` só ativam o que está explícito; sem
-  modelos treinados em `~/.astroframe/` (`.npz` versionados) a pipeline
+  modelos treinados em `Logs/weights/` (`.npz` versionados) a pipeline
   degrada silenciosamente e nunca bloqueia.

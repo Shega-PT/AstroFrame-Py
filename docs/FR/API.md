@@ -77,11 +77,12 @@ polish_image(image, detection, config=None) -> np.ndarray
 ```
 
 - Polissage **par astre** : détecte tous les disques (`find_all_disks`),
-  sépare les compagnons d'éclipse (centre à l'intérieur de l'astre le plus
-  grand) des reflets de l'objectif (centre à l'extérieur), rehausse **chaque
+  sépare les disques secondaires (centre à l'intérieur de l'astre le plus
+  grand ; p. ex. la Lune devant le Soleil) des reflets de l'objectif (centre à l'extérieur), rehausse **chaque
   astre individuellement** (`_astro_boost` : étirement local du contraste +
-  `polish.brightness` ; les silhouettes sombres et uniformes — comme la Lune en
-  éclipse — sont préservées intactes) et **recompose sans couture** par fusion
+  `polish.brightness` ;   les silhouettes sombres et uniformes — comme un disque
+  secondaire concentrique (p. ex. la Lune devant le Soleil) — sont
+  préservées intactes) et **recompose sans couture** par fusion
   de masques avec fondu (`_band_mask` + `_astro_region`) : la ligne de coupe
   `corona_scale × rayon` fond l'anneau dans le fond et les chevauchements entre
   astres sont la moyenne douce des rehaussements. Le fond est la **moyenne du
@@ -255,7 +256,7 @@ class CalibrationItem:
     height: int
     circles: list[DiskDetection] = []   # ground truth manuel
 
-class CalibrationStore(path):           # JSON v1 (samples/calibration.json)
+class CalibrationStore(path):           # JSON v1 (défaut : Logs/train/calibration.json ; repli : samples/calibration.json)
     .load() -> None                     # idempotent ; illisible/version -> vide
     .save() -> None
     .upsert_item(key, item) -> None     # écrit immédiatement
@@ -333,8 +334,8 @@ def manual_feedback(state, stars, db=None, config=None) -> tuple[str, str]
   de Gradio) ; chaque frame retourne :
   `(live_rgb, preview_rgb, out_video_path_ou_None, status, progress, rating_html,
   run_state, log_html)` — `live` est la frame originale en temps réel avec les
-  disques détectés (`_draw_disks` : **vert** = astre le plus grand, **jaune** =
-  compagnons d'éclipse, **rouge** = reflets — séparés par `_split_disks`, qui
+  disques détectés (`_draw_disks` : **vert** = astre le plus grand,   **jaune** =
+  disques secondaires, **rouge** = reflets — séparés par `_split_disks`, qui
   utilise le centre du disque vs. le rayon de l'astre le plus grand), `preview`
   est le résultat final montré seulement à des frames espacées
   (`_preview_every`), les autres champs avec `None`/fraction au milieu de la
@@ -467,7 +468,7 @@ class FeedbackDB(path=None):               # SQLite avec retry de verrouillage (
     .reset_tuning() -> int                             # efface la table tuning
 ```
 
-- Base SQLite à `~/.astroframe/feedback.db` (ou `$ASTROFRAME_FEEDBACK_DB`) ;
+- Base SQLite à `Logs/logs/system/feedback.db` (ou `$ASTROFRAME_FEEDBACK_DB`) ;
   créée au premier usage, avec retry sur base verrouillée et `history_limit`
   par profil. Deux tables : `runs` (exécutions + évaluations) et `tuning`
   (auto-réglages enregistrés par profil).
@@ -588,7 +589,7 @@ tuning_table_lines(result) -> list[str]
 - `export_trained_config` écrit un JSON versionné (kind
   `astroframe-tuned`, params effectifs, deltas, section `stabilizer`
   compatible avec l'export historique, rapport du proxy) — défaut CLI :
-  `<samples>/trained_config.json`.
+  `Logs/train/trained_config.json`.
 
 ### `ai.lstm` (LSTM NumPy pur)
 
@@ -612,7 +613,7 @@ class FitHistory: epochs, final_loss, best_loss, best_epoch
 class LSTMTuner(n_hidden=24, seed=42):
     .fit(history, epochs=200, lr=0.05, seq_len=8, val_fraction=0.2, patience=6) -> FitHistory
     .predict_next_delta(history, seq_len=8) -> dict[str, float]   # {} sans historique suffisant
-    .save(path=None) -> Path        # ~/.astroframe/lstm.npz par défaut
+    .save(path=None) -> Path        # Logs/weights/lstm.npz par défaut
     .load(path=None) -> LSTMTuner | None
 
 class TrajectoryPredictor(maxlen=8, use_lstm=False, model_path=None):
@@ -639,7 +640,7 @@ trajectory_model_path(path=None) -> Path
   (cellule 2→8, `use_lstm=True` + `ai.lstm_trajectory`) entraînée hors ligne
   sur des trajectoires synthétiques par `train_trajectory_model` (déterministe,
   seed fixe).
-- Modèles `.npz` **versionnés** dans `~/.astroframe/lstm.npz` : fichier
+- Modèles `.npz` **versionnés** dans `Logs/weights/lstm.npz` : fichier
   corrompu ou mauvaise version → `None` (repli silencieux).
 
 ### `ai.cnn` (CNN NumPy pur)
@@ -686,6 +687,6 @@ class DiskFilter(model=None, model_path=None):
   `DiskFilter` note chaque candidat de `find_all_disks`
   (`ai.disk_filter > 0.0` filtre ceux sous le seuil) et **ne vide jamais** la
   liste détectée — la détection ne régresse jamais.
-- Modèles : `~/.astroframe/enhancer_cnn.npz` et
-  `~/.astroframe/disk_filter.npz` (`.npz` versionnés ; corrompus ou mauvaise
+- Modèles : `Logs/weights/enhancer_cnn.npz` et
+  `Logs/weights/disk_filter.npz` (`.npz` versionnés ; corrompus ou mauvaise
   version → repli silencieux).

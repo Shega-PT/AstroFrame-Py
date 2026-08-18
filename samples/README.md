@@ -18,12 +18,12 @@ estrutura sugerida é separar por tipo e por assunto:
 ```
 samples/
 ├── images/          # fotografias (jpg/png/bmp/tif/webp)
-│   ├── eclipse/     # eclipse solar/lunar
-│   ├── lua/         # Lua (cheia, crescente, ...)
 │   ├── sol/         # Sol (manchas, proeminências, ...)
-│   └── planetas/    # planetas (Mercúrio, Vénus, Júpiter, ...)
+│   ├── lua/         # Lua (cheia, crescente, ...)
+│   ├── planetas/    # planetas (Mercúrio, Vénus, Júpiter, ...)
+│   └── cometas/     # cometas
 ├── videos/          # gravações (mp4/avi/mov/mkv/m4v)
-│   ├── eclipse/
+│   ├── sol/
 │   └── lua/
 └── calibration.json # ground truth manual (gerado pela calibração)
 ```
@@ -35,7 +35,8 @@ samples/
 2. Na interface: o círculo pré-preenchido é o ground truth guardado (ou a
    deteção automática como ponto de partida). **Arrastar** uma camada move o
    círculo, **pintar** por cima adiciona, **borracha** remove.
-3. **Guardar ajustes** grava os círculos em `samples/calibration.json`.
+3. **Guardar ajustes** grava os círculos em `Logs/train/calibration.json` (fallback:
+   `samples/calibration.json` quando o ficheiro global ainda não existe).
 4. **Validar todas as amostras** corre a deteção automática em tudo e compara
    com o manual: recall, precisão, IoU, erros de centro/raio + sugestões de
    parâmetros.

@@ -14,7 +14,7 @@ dependências novas):
 
 Segurança: sem histórico suficiente (ou sem modelo) as previsões devolvem
 `{}`/`None` — nada muda no comportamento atual. Os pesos são guardados em
-`.npz` versionados (`~/.astroframe/lstm.npz` por omissão) e o treino é
+`.npz` versionados (`Logs/weights/lstm.npz` por omissão) e o treino é
 offline e determinístico (seed fixa).
 """
 
@@ -28,11 +28,12 @@ from pathlib import Path
 import numpy as np
 
 from astroframe.ai.params import FEEDBACK_PARAMS, PARAM_SPECS, step
+from astroframe.paths import weights_dir
 
 logger = logging.getLogger(__name__)
 
 SCHEMA_VERSION = 1
-_DEFAULT_MODEL = Path("~/.astroframe/lstm.npz").expanduser()
+_DEFAULT_MODEL = weights_dir() / "lstm.npz"
 
 # Parâmetros previstos pelo LSTMTuner (os do feedback por estrelas, que são
 # os que mais mudam entre execuções). O alvo é o vetor de deltas normalizado.

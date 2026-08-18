@@ -16,8 +16,8 @@ ReLU) — com duas cabeças:
 
 Tudo NumPy (im2col vetorizado, sem dependências novas); `backend="torch"`
 é a aceleração opcional quando o PyTorch está instalado. Os pesos são
-guardados em `.npz` versionados (`~/.astroframe/enhancer_cnn.npz` e
-`~/.astroframe/disk_filter.npz`) e o treino é offline e determinístico.
+guardados em `.npz` versionados (`Logs/weights/enhancer_cnn.npz` e
+`Logs/weights/disk_filter.npz`) e o treino é offline e determinístico.
 """
 
 from __future__ import annotations
@@ -27,6 +27,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
+
+from astroframe.paths import weights_dir
 
 logger = logging.getLogger(__name__)
 
@@ -40,8 +42,8 @@ _STRIDE = _TILE - _TILE_OVERLAP
 # patamar simétrico e só ganha tração após alguns passos).
 _WARMUP = 8
 
-_ENHANCER_MODEL = Path("~/.astroframe/enhancer_cnn.npz").expanduser()
-_FILTER_MODEL = Path("~/.astroframe/disk_filter.npz").expanduser()
+_ENHANCER_MODEL = weights_dir() / "enhancer_cnn.npz"
+_FILTER_MODEL = weights_dir() / "disk_filter.npz"
 
 
 def _relu(x: np.ndarray) -> np.ndarray:

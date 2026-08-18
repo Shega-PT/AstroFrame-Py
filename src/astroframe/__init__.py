@@ -1,4 +1,4 @@
-"""AstroFrame — estabilização geométrica e melhoria automática de eclipses."""
+"""AstroFrame — estabilização geométrica e melhoria automática de astrofotografias e astrovídeos."""
 
 from __future__ import annotations
 

@@ -80,11 +80,13 @@ polish_image(image, detection, config=None) -> np.ndarray
 ```
 
 - Polimento **por astros**: deteta todos os discos (`find_all_disks`),
-  separa companheiros de eclipse (centro dentro do astro maior) de reflexos
-  da lente (centro fora), realça **cada astro individualmente** (`_astro_boost`:
+  separa discos secundários (centro dentro do astro maior; ex.: a Lua
+  diante do Sol) de reflexos da lente (centro fora), realça **cada astro
+  individualmente** (`_astro_boost`:
   esticamento local de contraste + `polish.brightness`; silhuetas escuras e
-  uniformes — como a Lua em eclipse — são preservadas intactas) e **remonta
-  sem costuras** por blend de máscaras com feather (`_band_mask` +
+  uniformes — como um disco secundário concêntrico (ex.: a Lua diante do Sol)
+  — são preservadas intactas) e **remonta sem costuras** por blend de máscaras
+  com feather (`_band_mask` +
   `_astro_region`): a linha de recorte `corona_scale × raio` dilui o anel até
   ao fundo e as sobreposições entre astros são a média suave dos realces.
   O fundo é a **média do fundo original** (`background_fill`) ou preto puro
@@ -341,8 +343,8 @@ def run_autotune_tab(samples_dir, budget, params, anneal, register, config=None)
   Gradio); a cada frame devolve:
   `(live_rgb, preview_rgb, out_video_path_ou_None, status, progress, rating_html,
   run_state, log_html)` — `live` é o frame original em tempo real com os discos
-  detetados (`_draw_disks`: **verde** = astro maior, **amarelo** = companheiros
-  de eclipse, **vermelho** = reflexos — separados por `_split_disks`, que usa o
+  detetados (`_draw_disks`: **verde** = astro maior, **amarelo** = discos
+  secundários, **vermelho** = reflexos — separados por `_split_disks`, que usa o
   centro do disco vs. raio do astro maior), `preview` é o resultado final
   mostrado apenas em frames espaçados (`_preview_every`), os outros campos com
   `None`/fração no meio do passe. Sem disco detetado em **nenhum** frame, o
@@ -507,7 +509,7 @@ tuning_table_lines(result) -> list[str]
 ```
 
 - **Avaliação por proxy** (`ProxyEval`): corre a pipeline nas imagens de
-  calibração (pasta `samples/` + ground truth `calibration.json`), mede o
+  calibração (pasta `samples/` + ground truth em `Logs/train/calibration.json`), mede o
   **IoU médio** entre os discos detetados (Hough) e os esperados, com
   **penalizações por discos extra/em falta**, e pontua alguns frames
   melhorados com estrelas. Os frames são reduzidos para ~480p (escala de
@@ -528,7 +530,7 @@ tuning_table_lines(result) -> list[str]
   está ativo. A CLI (`astroframe autotune`) e o separador Auto-tune chamam-na.
 - `export_trained_config` escreve um JSON com os `params` efetivos, os
   `deltas`, o `report` do proxy e uma secção `stabilizer` (compatível com o
-  export antigo); a CLI escreve `samples/trained_config.json` por omissão.
+  export antigo); a CLI escreve `Logs/train/trained_config.json` por omissão.
 
 ### `ai.lstm` (aprendizagem temporal)
 
@@ -554,7 +556,7 @@ class LSTMTuner(n_hidden=24, seed=42):
     .fit(history, epochs=200, lr=0.05, seq_len=8, val_fraction=0.2,
          patience=6) -> FitHistory
     .predict_next_delta(history, seq_len=8) -> dict[str, float]  # {} sem dados
-    .save(path=None) -> Path            # ~/.astroframe/lstm.npz
+    .save(path=None) -> Path            # Logs/weights/lstm.npz
     .load(path=None) -> LSTMTuner | None
 
 class TrajectoryPredictor(maxlen=8, use_lstm=False, model_path=None):
@@ -579,7 +581,7 @@ trajectory_model_path(path=None) -> Path
   e existe um modelo compatível. Usado pelo `AntiJitterStabilizer` com
   `ai.lstm_trajectory`; sem histórico devolve `None` — nada muda.
 - Os modelos são guardados como `.npz` **versionados**
-  (`~/.astroframe/lstm.npz` por omissão); um ficheiro corrompido ou com a
+  (`Logs/weights/lstm.npz` por omissão); um ficheiro corrompido ou com a
   versão errada carrega como `None` (fallback silencioso).
 
 ### `ai.cnn` (rede convolucional pequena)
@@ -626,8 +628,8 @@ class DiskFilter(model=None, model_path=None):
   (disco) e negativos (cross-entropy). O `DiskFilter` pontua cada deteção
   (`confidence`) e o `find_all_disks` descarta os candidatos abaixo de
   `ai.disk_filter` (0–1) — **nunca** esvazia a lista detetada.
-- Modelos: `~/.astroframe/enhancer_cnn.npz` e
-  `~/.astroframe/disk_filter.npz` (`.npz` versionados; corrompidos ou com a
+- Modelos: `Logs/weights/enhancer_cnn.npz` e
+  `Logs/weights/disk_filter.npz` (`.npz` versionados; corrompidos ou com a
   versão errada → fallback silencioso).
 
 ### `ai.score` (avaliação automática)
@@ -687,7 +689,7 @@ class FeedbackDB(path=None):               # SQLite com locking retry (WAL)
     .reset_tuning(profile=None) -> int     # limpa o histórico de tuning
 ```
 
-- Banco SQLite em `~/.astroframe/feedback.db` (ou `$ASTROFRAME_FEEDBACK_DB`);
+- Banco SQLite em `Logs/logs/system/feedback.db` (ou `$ASTROFRAME_FEEDBACK_DB`);
   criado ao primeiro uso, com retry em base bloqueada e `history_limit` por perfil.
   Além da tabela `runs` (avaliações), existe a tabela `tuning` (resultados do
   auto-tuning: base_params, deltas, relatório e fonte).

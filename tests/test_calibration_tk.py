@@ -401,7 +401,7 @@ def test_guardar_escreve_ground_truth(root, tmp_path, monkeypatch):
         press(app, 240, 180)
         app.save()
         assert "Guardado ✓ (1 forma(s))" in app.status.get()
-        store = CalibrationStore(tmp_path / "samples" / "calibration.json")
+        store = CalibrationStore(tmp_path / "train" / "calibration.json")
         item = store.get_item("sample_0.jpg")
         assert item is not None
         assert item.circles == [DiskDetection(240, 180, 40)]
@@ -419,7 +419,7 @@ def test_guardar_escreve_ground_truth(root, tmp_path, monkeypatch):
     root2 = calibration_tk.tk.Tk()
     root2.withdraw()
     samples2 = scan_samples(tmp_path / "samples")
-    store2 = CalibrationStore(tmp_path / "samples" / "calibration.json")
+    store2 = CalibrationStore(tmp_path / "train" / "calibration.json")
     app2 = calibration_tk.CalibrationTkApp(root2, samples2, store2, AstroFrameConfig())
     try:
         app2.shape_kind.set("ellipse")

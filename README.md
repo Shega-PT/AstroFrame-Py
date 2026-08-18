@@ -1,14 +1,14 @@
 # AstroFrame
 
-Estabilização geométrica e melhoria automática de fotos e vídeos de eclipses solares e lunares, assim como astrofotografia.
+Estabilização geométrica e melhoria automática de astrofotografias e astrovídeos — fotos e vídeos do Sol, da Lua, de planetas, cometas e outros astros.
 
 ![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue) ![License MIT](https://img.shields.io/badge/license-MIT-green)
 
 ## Funcionalidades
 
-- **Estabilização por geometria** — deteta o disco do Sol/Lua/astro (`cv2.HoughCircles` + fallback por contornos + refinamento por centroide de intensidade) e re-alinha cada frame para manter o eclipse/astro sempre no centro exato, sem bordas pretas.
+- **Estabilização por geometria** — deteta o disco do astro (`cv2.HoughCircles` + fallback por contornos + refinamento por centroide de intensidade) e re-alinha cada frame para manter o astro sempre no centro exato, sem bordas pretas.
 
-- **Melhoria automática** — CLAHE no espaço LAB (sem estourar o brilho), denoising Non-Local Means (útil para ISO alto) e máscara de nitidez (unsharp) para destacar a borda da Lua/Sol/astro.
+- **Melhoria automática** — CLAHE no espaço LAB (sem estourar o brilho), denoising Non-Local Means (útil para ISO alto) e máscara de nitidez (unsharp) para destacar o limbo do astro.
 
 - **Lucky imaging** — descarte de frames borrados por variância do Laplaciano, com limiar estimado estatisticamente a partir do próprio vídeo.
 
@@ -16,19 +16,19 @@ Estabilização geométrica e melhoria automática de fotos e vídeos de eclipse
 
 - **Anti-trepidação temporal** — suavização do centroide (EMA) e reutilização do último deslocamento válido quando um frame não tem deteção.
 
-- **Deteção de múltiplos discos** — além do disco principal, são detetados os **reflexos** (Hough + contornos); o polimento elimina os reflexos e o vídeo ao vivo mostra-os a vermelho.
+- **Deteção de múltiplos discos** — além do disco principal, são detetados os **discos secundários** (corpos diante do astro maior, como a Lua diante do Sol) e os **reflexos** da lente (Hough + contornos); o polimento elimina os reflexos e o vídeo ao vivo mostra-os a vermelho.
 
-- **Polimento e avaliação automática** — `polish_image()` dá brilho ao disco mantendo a coroa; `score_image()` atribui **estrelas (0–5)** ao resultado (ruído, contraste, tamanho e cor da coroa).
+- **Polimento e avaliação automática** — `polish_image()` dá brilho ao disco mantendo a coroa/limbo; `score_image()` atribui **estrelas (0–5)** ao resultado (ruído, contraste, tamanho e cor da coroa).
 
 - **Calibração com exemplos** — interface desktop nativa (`python calibrate.py`) que carrega as fotos e vídeos de `samples/`, permite **desenhar círculos/elipses à mão** (clique cria, arrastar move, pegas redimensionam) numa 1.ª passagem, ligar a **deteção automática** na 2.ª para preencher/validar as restantes amostras, e comparar tudo contra o ground truth em todas as amostras (recall, precisão, IoU, erros + sugestões de parâmetros).
 
-- **Validação e treino da deteção** — `validator.py` (janela desktop nativa) percorre as amostras, mostra a deteção com zoom/pan, e aprende **recompensando e punindo 7 parâmetros do detetor** forma a forma contra o guia manual; o **treino automático** (`--auto`) re-deteça em séries até 100% e exporta os **pesos treinados** para o sistema real.
+- **Validação e treino da deteção** — `validator.py` (janela desktop nativa) percorre as amostras, mostra a deteção com zoom/pan, e aprende **recompensando e punindo 7 parâmetros do detetor** forma a forma contra o guia manual; o **treino automático** (`--auto`) re-deteça em séries até 100% e exporta os **pesos treinados** para o sistema real; com `--cnn` treina também a **CNN de deteção** entre séries (positivos do guia vs rejeitados/aleatórios), promovendo o **campeão** registado no banco se melhor.
 
 - **Aprendizagem por feedback** — cada execução fica em SQLite; para além da avaliação automática, pode avaliar manualmente (0–5 estrelas) e o AstroFrame **ajusta os sliders automaticamente** na próxima execução com o mesmo perfil de câmara, mostrando o histórico/log na própria interface.
 
 - **Auto-tuning de todos os parâmetros** — o subcomando `astroframe autotune` (ou o separador **Auto-tune** do Gradio) otimiza todos os parâmetros de deteção e melhoria contra o ground truth de `samples/` (IoU do disco), com orçamento de tempo, recozimento opcional e pré-semente LSTM; o resultado fica no banco de aprendizagem e aplica-se automaticamente nas execuções seguintes.
 
-- **Rede neuronal pequena (CNN, NumPy puro)** — um modelo **residual** remove ruído/smearing no passo pós-unsharp (`ai.cnn_enhance`) e um **classificador disco/ruído** pontua cada deteção para filtrar falsos positivos (`ai.disk_filter`); treino offline determinístico, modelos versionados em `~/.astroframe/`.
+- **Rede neuronal pequena (CNN, NumPy puro)** — um modelo **residual** remove ruído/smearing no passo pós-unsharp (`ai.cnn_enhance`) e um **classificador disco/ruído** pontua cada deteção para filtrar falsos positivos (`ai.disk_filter`); treino offline determinístico, modelos versionados em `Logs/weights/`; o **`enhancer_trainer.py`** treina a CNN residual (GUI lado a lado com Válido/Rejeitado, ou `--auto` com degradação sintética), comparando cada ronda com o **campeão** do banco.
 
 - **LSTM opcional** — previsão da trajetória do disco para estabilização (`ai.lstm_trajectory`); sem PyTorch: implementação NumPy nativa (torch é opcional).
 
@@ -64,6 +64,8 @@ Alternativa simples: `pip install -r requirements.txt`. Requer Python 3.10+.
 python main.py                             # interface web (Gradio) — frontend + backend juntos
 python calibrate.py                        # interface de calibração (samples/)
 python validator.py                        # validação/treino da deteção (samples/)
+python validator.py --auto --cnn           # treino automático + CNN de deteção
+python enhancer_trainer.py                 # treino da CNN residual (GUI lado a lado)
 astroframe serve                          # equivalente via CLI instalada
 astroframe process --input foto1.jpg foto2.jpg --output-dir outputs/
 astroframe video --input eclipse.mp4 --mode enhance
@@ -102,7 +104,7 @@ regista o resultado no banco de aprendizagem e aplica-o automaticamente às
 execuções seguintes do mesmo perfil. Opções: `--budget`, `--seed`,
 `--no-anneal`, `--params`, `--profile`, `--export`, `--reset`. Existe também
 um separador **Auto-tune** no Gradio. Toda a IA está **desligada por omissão**
-(`tuning.enabled=false`, `ai.*`); sem modelos em `~/.astroframe/` a pipeline
+(`tuning.enabled=false`, `ai.*`); sem modelos em `Logs/weights/` a pipeline
 degrada silenciosamente.
 
 ## Documentação
@@ -131,7 +133,7 @@ degrada silenciosamente.
 ## Desenvolvimento
 
 ```bash
-pytest                      # 558 testes (pixel-tests com imagens sintéticas)
+pytest                      # 649 testes (pixel-tests com imagens sintéticas)
 pytest --cov=astroframe     # cobertura (100% do pacote)
 ruff check .                # lint
 ruff format .               # formatação

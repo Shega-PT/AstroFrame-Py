@@ -74,6 +74,15 @@ from astroframe.calibration.store import CalibrationStore
 from astroframe.calibration.validate import CalibrationReport, shape_iou, validate_all, validate_item
 from astroframe.config import AstroFrameConfig
 from astroframe.core.stabilizer import DiskDetection, find_all_disks
+from astroframe.paths import (
+    calibration_json,
+    logs_ia_dir,
+    migrate_legacy,
+    setup_logging,
+    staging_dir,
+    train_dir,
+    weights_dir,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -126,8 +135,8 @@ DEFAULT_EXPORT_NAME = "trained_config.json"
 # os candidatos da deteção são filtrados por confiança durante o julgamento.
 CNN_THRESHOLD_DEFAULT = 0.5
 CNN_RANDOM_NEGATIVES_PER_SAMPLE = 4
-CNN_MODEL_DIR = Path("~/.astroframe/models").expanduser()
-CNN_CANONICAL_PATH = Path("~/.astroframe/disk_filter.npz").expanduser()
+CNN_MODEL_DIR = staging_dir()
+CNN_CANONICAL_PATH = weights_dir() / "disk_filter.npz"
 
 # Treino automático: o mínimo de correspondência com o guia manual (IoU) é
 # sempre ≥ 0.90; a UI (e a CLI com `--iou`) pode aumentar o valor para subir
@@ -957,11 +966,12 @@ def train_classifier_round(
     """Treina/continua o classificador CNN com os patches acumulados.
 
     Warm-start a partir do campeão (`champion_path`) quando existe; o
-    candidato é guardado em staging (`~/.astroframe/models/`) e **comparado
+    candidato é guardado em staging (`Logs/weights/staging/`) e **comparado
     com o melhor registado no banco** (`add_model`): se for melhor promove-o
-    (copia para o caminho canónico `~/.astroframe/disk_filter.npz`); se for
+    (copia para o caminho canónico `Logs/weights/disk_filter.npz`); se for
     pior, a série seguinte parte dos pesos do campeão (warm-start). Sem
-    patches suficientes devolve `None` (o Hough segue como hoje).
+    patches suficientes devolve `None` (o Hough segue como hoje). O relatório
+    de cada ronda fica em `Logs/logs/ia/`.
     """
     if len(positives) < 2 or len(negatives) < 2:
         if db is not None:
@@ -992,14 +1002,15 @@ def train_classifier_round(
         metric_name=metric_name,
     )
     champion = result["champion"]
+    score_text = f"{score:.1f}" if score is not None else "—"
     if result["promoted"]:
         shutil.copyfile(staged, CNN_CANONICAL_PATH)
-        db.log("info", "validator", f"Série {round_n}: novo campeão CNN (score {score:.1f})", metrics)
+        db.log("info", "validator", f"Série {round_n}: novo campeão CNN (score {score_text})", metrics)
     else:
         db.log(
             "info",
             "validator",
-            f"Série {round_n}: CNN pior que o campeão (score {score}); próxima série parte do campeão",
+            f"Série {round_n}: CNN pior que o campeão (score {score_text}); próxima série parte do campeão",
             metrics,
         )
     record = {
@@ -1009,6 +1020,10 @@ def train_classifier_round(
         "promoted": bool(result["promoted"]),
         "dataset": len(positives) + len(negatives),
     }
+    report_path = logs_ia_dir() / f"disk_filter_round_{round_n}.json"
+    report_path.write_text(
+        json.dumps({**record, **metrics}, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
     state.cnn_series.append(record)
     state.save()
     return {
@@ -1665,7 +1680,7 @@ _PARAM_TOOLTIPS = {
     "occluded_ratio": "Fração do disco coberta por outro que anula o disco "
                       "oculto (artefacto).",
     "occluded_ring": "Largura do anel escuro exigido para o disco interior "
-                     "num eclipse total.",
+                     "(ex.: a Lua diante do Sol).",
 }
 
 
@@ -2296,8 +2311,8 @@ def build_app(
     """Constrói a janela (sem `mainloop`), para testes e para `run`."""
     config = AstroFrameConfig.from_yaml(config_path) if config_path else AstroFrameConfig()
     samples = scan_samples(samples_dir)
-    store = CalibrationStore(Path(samples_dir) / "calibration.json")
-    state = ValidatorState(state_path or Path(samples_dir) / DEFAULT_STATE_NAME)
+    store = CalibrationStore(calibration_json(samples_dir))
+    state = ValidatorState(state_path or train_dir() / DEFAULT_STATE_NAME)
     return ValidatorTkApp(root, samples, store, config, state, samples_root=samples_dir)
 
 
@@ -2324,11 +2339,11 @@ def run_check(
     """`--check`: deteta em todas as amostras (com os deltas aprendidos) e
     imprime o relatório contra `calibration.json`, sem janela."""
     config = AstroFrameConfig.from_yaml(config_path) if config_path else AstroFrameConfig()
-    state = ValidatorState(state_path or Path(samples_dir) / DEFAULT_STATE_NAME)
+    state = ValidatorState(state_path or train_dir() / DEFAULT_STATE_NAME)
     apply_state_weights(state)
     apply_effective(config, state.deltas)
     samples = scan_samples(samples_dir)
-    store = CalibrationStore(Path(samples_dir) / "calibration.json")
+    store = CalibrationStore(calibration_json(samples_dir))
 
     print(f"AstroFrame — verificação automática da deteção ({len(samples)} amostras)")
     deltas_text = " · ".join(
@@ -2386,11 +2401,11 @@ def run_auto_headless(
     usa o valor guardado no estado (pesos 'Salvar').
     """
     config = AstroFrameConfig.from_yaml(config_path) if config_path else AstroFrameConfig()
-    state = ValidatorState(state_path or Path(samples_dir) / DEFAULT_STATE_NAME)
+    state = ValidatorState(state_path or train_dir() / DEFAULT_STATE_NAME)
     apply_state_weights(state)
     iou_threshold = iou if iou is not None else state_iou(state)
     samples = scan_samples(samples_dir)
-    store = CalibrationStore(Path(samples_dir) / "calibration.json")
+    store = CalibrationStore(calibration_json(samples_dir))
     db = FeedbackDB()
 
     print(
@@ -2457,7 +2472,7 @@ def run_auto_headless(
     result = build_global_report(samples, store, state)
     final_report = result[0] if result else None
     export_path = export_trained(
-        state, config, export_path or Path(samples_dir) / DEFAULT_EXPORT_NAME, final_report
+        state, config, export_path or train_dir() / DEFAULT_EXPORT_NAME, final_report
     )
     print(f"Config treinada exportada: {export_path}")
     if result is not None:
@@ -2476,7 +2491,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="validator",
         description=(
             "AstroFrame — validação/treino da deteção: recompensa e punição por forma, "
-            "com samples/calibration.json como guia, até 100% processado."
+            "com Logs/train/calibration.json como guia, até 100% processado."
         ),
     )
     parser.add_argument(
@@ -2488,7 +2503,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--state",
         default=None,
-        help=f"Ficheiro de estado do treino (omissão: <samples>/{DEFAULT_STATE_NAME})",
+        help=f"Ficheiro de estado do treino (omissão: Logs/train/{DEFAULT_STATE_NAME})",
     )
     parser.add_argument(
         "--reset-state",
@@ -2543,15 +2558,17 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             f"Ficheiro JSON com a configuração treinada para o sistema real "
-            f"(omissão: <samples>/{DEFAULT_EXPORT_NAME})"
+            f"(omissão: Logs/train/{DEFAULT_EXPORT_NAME})"
         ),
     )
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
+    migrate_legacy()
+    setup_logging("validator.log")
     args = build_parser().parse_args(argv)
-    state_path = Path(args.state) if args.state else Path(args.samples) / DEFAULT_STATE_NAME
+    state_path = Path(args.state) if args.state else train_dir() / DEFAULT_STATE_NAME
     if args.reset_state and state_path.exists():
         ValidatorState(state_path).reset()
         print(f"Estado de validação reposto: {state_path}")
