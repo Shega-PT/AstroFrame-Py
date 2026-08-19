@@ -287,6 +287,7 @@ def test_auto_train_window_preview_e_sessao(root, tmp_path, fake_final_window, m
         win._preview_msg(frame, [CIRCLE], "a", 0.90)
         assert win._queue.qsize() == 0
         win.preview_var.set(True)
+        time.sleep(validator.PREVIEW_THROTTLE_S + 0.05)  # deixa expirar o throttle do preview manual
 
         monkeypatch.setattr(validator.AutoTrainer, "run_series", _fake_run_series_factory(win))
         win.series_var.set(2)

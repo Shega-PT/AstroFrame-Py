@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import builtins
+
 import numpy as np
 import pytest
 
@@ -92,7 +94,15 @@ def test_lstm_cell_load_inexistente_e_corrompido(tmp_path):
     assert LSTMCell.load(bad) is None
 
 
-def test_torch_available_falso_sem_pytorch():
+def test_torch_available_falso_sem_pytorch(monkeypatch):
+    original = builtins.__import__
+
+    def fake(name, *args, **kwargs):
+        if name == "torch":
+            raise ImportError("torch simulado ausente")
+        return original(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake)
     assert torch_available() is False
 
 
