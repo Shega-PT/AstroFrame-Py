@@ -20,8 +20,8 @@ jobs:
         run: pip install torch --index-url https://download.pytorch.org/whl/cpu
       - name: Instalar o pacote
         run: pip install -e ".[dev]"
-      - name: Testes
-        run: xvfb-run -a pytest
+      - name: Testes (headless, sem xvfb-run)
+        run: pytest
 
   lint:
     runs-on: ubuntu-latest

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "astroframe"
-version = "0.9.0"
+version = "0.9.1"
 description = "Estabilização geométrica e melhoria automática de astrofotografias e astrovídeos"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -28,7 +28,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.0", "ruff>=0.6"]
+dev = ["pytest>=7.0", "pytest-timeout>=2.3", "ruff>=0.6"]
 
 [project.scripts]
 astroframe = "astroframe.ui.cli:main"
@@ -39,6 +39,10 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+# Rede de segurança contra bloqueios: nenhum teste pode ficar pendurado para
+# sempre (ex.: uma janela interativa esquecida). 300 s/teste é muito acima do
+# mais lento (treino real de CNN) e transforma qualquer regressão em falha.
+addopts = "--timeout=300"
 
 [tool.ruff]
 line-length = 110

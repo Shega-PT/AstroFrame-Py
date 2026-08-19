@@ -6,6 +6,36 @@ fichier.
 Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et le
 versionnage [SemVer](https://semver.org/).
 
+## [0.9.1] - 2026-08-19
+
+### Ajouté
+
+- **Tests 100 % headless** — nouvelle infrastructure dans
+  `tests/conftest.py` : sans `DISPLAY`, un `Xvfb` virtuel est démarré
+  automatiquement pour la session ; toutes les fenêtres Tk
+  (`Tk`/`Toplevel`) sont retirées de l'écran, enregistrées et **détruites à
+  la fin de chaque test** ; `mainloop` programme la fermeture automatique
+  (~60 ms) et ne bloque jamais ; `cv2.imshow`/`cv2.waitKey` (fenêtres
+  OpenCV) lèvent une erreur claire ; matplotlib tourne toujours avec le
+  backend `Agg`. Le CI n'a plus besoin de `xvfb-run -a`.
+- **Suite E2E** (`tests/test_e2e.py`, 12 tests) — flux complets par les
+  points d'entrée réels : CLI en sous-processus (`process`, `video` en
+  modes enhance/stabilize/stack, `config-template`, `autotune` avec
+  export), pipeline complète image/vidéo (stabiliser → améliorer →
+  polir) et `validator.py --check` / `enhancer_trainer.py --check` sans
+  fenêtre.
+- **Filet de sécurité anti-blocage** — `pytest-timeout` dans les dev deps
+  et `--timeout=300` par test : aucun test ne peut rester bloqué pour
+  toujours.
+
+### Corrigé
+
+- **Les tests de validation bloquaient la suite** — `ValidatorTkApp`
+  programme désormais le premier `_poll_queue` dans `__init__` (comme la
+  calibration Tk) ; les tests de l'UI de validation ne brûlent plus le
+  délai d'attente de 10 s (~10 s → ~1 s chacun) et la suite complète
+  se termine (666 tests, auparavant bloquée à `test_main_module_guard`).
+
 ## [0.9.0] - 2026-08-19
 
 ### Ajouté

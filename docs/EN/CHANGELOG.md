@@ -5,6 +5,33 @@ All notable changes to AstroFrame will be documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and versioning [SemVer](https://semver.org/).
 
+## [0.9.1] - 2026-08-19
+
+### Added
+
+- **100% headless tests** — new infrastructure in `tests/conftest.py`:
+  without `DISPLAY`, a virtual `Xvfb` is started automatically for the
+  session; all Tk windows (`Tk`/`Toplevel`) are withdrawn from the screen,
+  tracked and **destroyed at the end of each test**; `mainloop` schedules
+  the auto-close (~60 ms) and never blocks; `cv2.imshow`/`cv2.waitKey`
+  (OpenCV windows) raise a clear error; matplotlib always runs with the
+  `Agg` backend. The CI no longer needs `xvfb-run -a`.
+- **E2E suite** (`tests/test_e2e.py`, 12 tests) — complete flows through
+  the real entry points: CLI in subprocess (`process`, `video` in
+  enhance/stabilize/stack modes, `config-template`, `autotune` with
+  export), full image/video pipeline (stabilize → enhance → polish) and
+  `validator.py --check` / `enhancer_trainer.py --check` without a window.
+- **Blocking safety net** — `pytest-timeout` in dev deps and
+  `--timeout=300` per test: no test can hang forever.
+
+### Fixed
+
+- **Validation tests hung the suite** — `ValidatorTkApp` now schedules the
+  first `_poll_queue` in `__init__` (like the Tk calibration); validation
+  UI tests no longer burn the 10 s wait deadline (~10 s → ~1 s each) and
+  the full suite finishes (666 tests, previously hung at
+  `test_main_module_guard`).
+
 ## [0.9.0] - 2026-08-19
 
 ### Added

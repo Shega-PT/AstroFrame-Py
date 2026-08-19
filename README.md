@@ -121,11 +121,11 @@ degrada silenciosamente.
 
 - [docs/PT/Arquitetura.md](docs/PT/Arquitetura.md) — especificação original da solução (referência, PT).
 
-- [docs/EN/](docs/EN/) — mesma documentação em inglês (API, Architecture, Usage, CHANGELOG).
+- [docs/EN/](docs/EN/) — same documentation in English (API, Architecture, Usage, CHANGELOG).
 
 - [docs/FR/](docs/FR/) — même documentation en français (API, Architecture, Usage, CHANGELOG).
 
-- [README-EN.md](README-EN.md) / [README-FR.md](README-FR.md) — este README em inglês e francês.
+- [README-EN.md](README-EN.md) / [README-FR.md](README-FR.md) — README in English /README en francês.
 
 ## Limitações conhecidas
 
@@ -139,13 +139,17 @@ degrada silenciosamente.
 ## Desenvolvimento
 
 ```bash
-pytest                      # 649 testes (pixel-tests com imagens sintéticas)
+pytest                      # 666 testes headless (janelas Tk/OpenCV fechadas automaticamente)
+pytest tests/test_e2e.py    # E2E: CLI real + pipeline completa + --check sem janela
 pytest --cov=astroframe     # cobertura (100% do pacote)
 ruff check .                # lint
 ruff format .               # formatação
 ```
 
-CI (GitHub Actions): pytest em Python 3.10/3.12 + ruff, em `.github/workflows/ci.yml`.
+CI (GitHub Actions): pytest headless em Python 3.10/3.12 + ruff, em
+`.github/workflows/ci.yml` — sem `xvfb-run`: sem `DISPLAY`, um `Xvfb` virtual é
+arrancado automaticamente e qualquer janela aberta por um teste é fechada no
+fim do mesmo (`--timeout=300` por teste como rede de segurança).
 
 ## Estrutura
 

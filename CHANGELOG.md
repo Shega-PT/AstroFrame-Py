@@ -5,6 +5,33 @@ Todas as mudanças notáveis do AstroFrame serão documentadas neste ficheiro.
 O formato segue [Keep a Changelog](https://keepachangelog.com/pt-PT/1.1.0/),
 e o versionamento [SemVer](https://semver.org/lang/pt-BR/).
 
+## [0.9.1] - 2026-08-19
+
+### Adicionado
+
+- **Testes 100% headless** — infraestrutura nova no `tests/conftest.py`:
+  sem `DISPLAY`, um `Xvfb` virtual é arrancado automaticamente para a
+  sessão; todas as janelas Tk (`Tk`/`Toplevel`) são retiradas do ecrã,
+  registadas e **destruídas no fim de cada teste**; `mainloop` agenda o
+  fecho automático (~60 ms) e nunca bloqueia; `cv2.imshow`/`cv2.waitKey`
+  (janelas OpenCV) levantam erro claro; matplotlib corre sempre com o
+  backend `Agg`. O CI deixa de precisar de `xvfb-run -a`.
+- **Suíte E2E** (`tests/test_e2e.py`, 12 testes) — fluxos completos pelos
+  pontos de entrada reais: CLI em subprocesso (`process`, `video` nos modos
+  enhance/stabilize/stack, `config-template`, `autotune` com exportação),
+  pipeline completa imagem/vídeo (estabilizar → melhorar → polir) e
+  `validator.py --check` / `enhancer_trainer.py --check` sem janela.
+- **Rede de segurança contra bloqueios** — `pytest-timeout` nos dev deps e
+  `--timeout=300` por teste: nenhum teste pode pendurar para sempre.
+
+### Corrigido
+
+- **Testes da validação penduravam a suíte** — `ValidatorTkApp` passou a
+  agendar o primeiro `_poll_queue` no `__init__` (como a calibração Tk);
+  os testes da UI da validação deixam de queimar o prazo de 10 s por
+  espera (~10 s → ~1 s cada) e a suíte completa termina (666 testes, antes
+  pendurava em `test_main_module_guard`).
+
 ## [0.9.0] - 2026-08-19
 
 ### Adicionado

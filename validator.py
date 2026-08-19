@@ -1077,6 +1077,7 @@ class ValidatorTkApp:
         self._training = False
 
         self._build_ui()
+        self.root.after(50, self._poll_queue)
         if self.state.round == 0:
             self.state.begin_round("manual")
         if self.samples:

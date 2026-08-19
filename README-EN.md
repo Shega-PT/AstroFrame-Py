@@ -105,13 +105,17 @@ detection with the ground truth on all samples.
 ## Development
 
 ```bash
-pytest                      # 649 tests (pixel tests with synthetic images)
+pytest                      # 666 headless tests (Tk/OpenCV windows auto-closed)
+pytest tests/test_e2e.py    # E2E: real CLI + full pipeline + windowless --check
 pytest --cov=astroframe     # coverage (100% of the package)
 ruff check .                # lint
 ruff format .               # formatting
 ```
 
-CI (GitHub Actions): pytest on Python 3.10/3.12 + ruff, in `.github/workflows/ci.yml`.
+CI (GitHub Actions): headless pytest on Python 3.10/3.12 + ruff, in
+`.github/workflows/ci.yml` — no `xvfb-run`: without `DISPLAY`, a virtual
+`Xvfb` is started automatically, and any window opened by a test is closed
+at the end of it (`--timeout=300` per test as a safety net).
 
 ## Structure
 
