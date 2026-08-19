@@ -244,9 +244,7 @@ def test_trajectory_lstm_sem_modelo_faz_linear(tmp_path):
 
 def test_train_trajectory_model_guarda_e_prediz(tmp_path):
     model_path = tmp_path / "traj.npz"
-    trajectories = [
-        [(float(100 + 10 * t), float(50 + 5 * t)) for t in range(10)] for _ in range(4)
-    ]
+    trajectories = [[(float(100 + 10 * t), float(50 + 5 * t)) for t in range(10)] for _ in range(4)]
     path = train_trajectory_model(trajectories, path=model_path, seed=3, epochs=20)
     assert path == model_path
     assert model_path.exists()
@@ -260,7 +258,7 @@ def test_train_trajectory_model_guarda_e_prediz(tmp_path):
 
 def test_train_trajectory_model_sem_trajetorias_levanta(tmp_path):
     with pytest.raises(ValueError, match="Sem trajetórias"):
-        train_trajectory_model([[ (1.0, 1.0) ]], path=tmp_path / "t.npz")
+        train_trajectory_model([[(1.0, 1.0)]], path=tmp_path / "t.npz")
 
 
 def test_trajectory_model_path_por_omissao():

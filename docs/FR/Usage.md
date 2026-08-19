@@ -331,6 +331,7 @@ astroframe video --input eclipse.mp4                                  # mode enh
 astroframe video --input eclipse.mp4 --mode stabilize                 # centre seulement le disque
 astroframe video --input eclipse.mp4 --mode stack --stack-n 20        # empile les 20 meilleures frames
 astroframe video --input eclipse.mp4 --mode enhance --fast            # sans débruitage (rapide)
+astroframe video --input eclipse.mp4 --interp 2                        # +2 frames RIFE par paire
 astroframe video --input eclipse.mp4 --output sortie.mp4              # nom du fichier de sortie
 ```
 
@@ -338,6 +339,11 @@ astroframe video --input eclipse.mp4 --output sortie.mp4              # nom du f
   ré-exportée en MP4 (`<nom>_stabilized.mp4` par défaut) avec une barre de
   progression. L'anti-tremblement temporel lisse le centroïde (EMA) et garde
   le dernier déplacement quand une frame n'a pas de détection.
+- **`--interp N`** — génère N frames intermédiaires par paire de frames avec
+  le **RIFE** (PyTorch, obligatoire depuis la v0.9.0) et exporte la vidéo
+  `(N+1)×` plus fluide (`fps × (N+1)`) ; le modèle est téléchargé au premier
+  usage via `torch.hub` — en cas d'échec, le CLI prévient et continue sans
+  interpolation.
 - **stack** — sélectionne les N frames les plus nettes (lucky imaging),
   **centre chacune** et les combine (médiane par défaut) en un seul PNG.
 - `--fast` omet l'étape la plus lente (le débruitage) et réduit beaucoup le
@@ -464,7 +470,6 @@ Tous les champs et types :
 ### `ai` (réseaux LSTM/CNN)
 | Champ | Type | Défaut | Description |
 |---|---|---|---|
-| `backend` | str | `numpy` | Implémentation des réseaux (NumPy toujours disponible ; `torch` = accélération facultative) |
 | `lstm_trajectory` | bool | `false` | Prédiction LSTM de la trajectoire du disque (anti-tremblement) |
 | `cnn_enhance` | bool | `false` | Étape résiduelle CNN à la fin de l'amélioration (post-unsharp) |
 | `disk_filter` | float | `0.0` | Seuil de confiance CNN pour filtrer les faux positifs de la détection (0 = désactivé) |
@@ -517,5 +522,6 @@ plantent jamais le démarrage.
   s'activent qu'explicitement (`tuning.enabled=true`, `ai.*`) ; un modèle
   manquant ou corrompu dégrade silencieusement, sans jamais bloquer le
   pipeline.
-- **RIFE** (interpolation sur les sauts) est facultatif et exige PyTorch ; voir
-  [API.md](API.md).
+- **RIFE** (`--interp N`) — interpolation de mouvement via PyTorch
+  (obligatoire depuis la v0.9.0) ; le modèle est chargé par `torch.hub` au
+  premier usage ; voir [API.md](API.md).

@@ -41,9 +41,7 @@ def circle_iou(a: DiskDetection, b: DiskDetection) -> float:
     return float(max(0.0, min(1.0, inter / union)))
 
 
-def _ellipse_mask(
-    cx: float, cy: float, rx: float, ry: float, width: int, height: int
-) -> np.ndarray:
+def _ellipse_mask(cx: float, cy: float, rx: float, ry: float, width: int, height: int) -> np.ndarray:
     """Máscara binária da elipse (ou círculo se `ry == rx`)."""
     ys, xs = np.mgrid[0:height, 0:width].astype(np.float32)
     dx, dy = xs - cx, ys - cy
@@ -63,9 +61,7 @@ def _shape_mask(
         return _ellipse_mask(
             shape.cx - origin_x, shape.cy - origin_y, shape.radius, shape.radius, width, height
         )
-    return _ellipse_mask(
-        shape.cx - origin_x, shape.cy - origin_y, shape.radius, shape.ry, width, height
-    )
+    return _ellipse_mask(shape.cx - origin_x, shape.cy - origin_y, shape.radius, shape.ry, width, height)
 
 
 def shape_iou(a: DiskDetection, b: DiskDetection) -> float:
@@ -141,9 +137,7 @@ def validate_item(label: str, manual: list[DiskDetection], detected: list[DiskDe
     ious = [shape_iou(manual[i], detected[j]) for i, j in pairs]
     centers = [math.hypot(manual[i].cx - detected[j].cx, manual[i].cy - detected[j].cy) for i, j in pairs]
     radii = [
-        (shape_mean_radius(detected[j]) - shape_mean_radius(manual[i]))
-        / shape_mean_radius(manual[i])
-        * 100.0
+        (shape_mean_radius(detected[j]) - shape_mean_radius(manual[i])) / shape_mean_radius(manual[i]) * 100.0
         for i, j in pairs
     ]
     return ItemReport(

@@ -110,6 +110,68 @@ def test_process_video_escritor_falha_levanta(tmp_path, monkeypatch):
         process_video(str(video), str(tmp_path / "x.mp4"), AstroFrameConfig(), "enhance", None, False)
 
 
+class _FakeInterpolator:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def interpolate(self, frame_a, frame_b, n_interp):
+        return [np.full(frame_a.shape, 99, dtype=np.uint8) for _ in range(n_interp)]
+
+
+def test_process_video_interp_escreve_frames_intermedios(tmp_path, monkeypatch):
+    video = tmp_path / "clip.avi"
+    _write_clip(video, n_frames=3, fps=10.0)
+    monkeypatch.setattr("astroframe.ai.rife.RifeInterpolator", _FakeInterpolator)
+    out = process_video(str(video), None, AstroFrameConfig(), "stabilize", None, False, interp=2)
+    capture = cv2.VideoCapture(out)
+    frames = 0
+    while capture.read()[0]:
+        frames += 1
+    fps = capture.get(cv2.CAP_PROP_FPS)
+    capture.release()
+    assert frames == 1 + (2 + 1) * (3 - 1)
+    assert fps == pytest.approx(30.0)
+
+
+def test_process_video_interp_falha_ao_carregar_continua_sem_ela(tmp_path, monkeypatch, caplog):
+    video = tmp_path / "clip.avi"
+    _write_clip(video, n_frames=3, fps=10.0)
+
+    def falhar(*args, **kwargs):
+        raise RuntimeError("sem rede")
+
+    monkeypatch.setattr("astroframe.ai.rife.RifeInterpolator", falhar)
+    out = process_video(str(video), None, AstroFrameConfig(), "stabilize", None, False, interp=2)
+    capture = cv2.VideoCapture(out)
+    frames = 0
+    while capture.read()[0]:
+        frames += 1
+    capture.release()
+    assert frames == 3
+    assert any("Interpolação RIFE indisponível" in record.getMessage() for record in caplog.records)
+
+
+def test_process_video_interp_negativo_ignorado(tmp_path, monkeypatch):
+    video = tmp_path / "clip.avi"
+    _write_clip(video, n_frames=3)
+    monkeypatch.setattr("astroframe.ai.rife.RifeInterpolator", _FakeInterpolator)
+    out = process_video(str(video), None, AstroFrameConfig(), "stabilize", None, False, interp=-2)
+    capture = cv2.VideoCapture(out)
+    frames = 0
+    while capture.read()[0]:
+        frames += 1
+    capture.release()
+    assert frames == 3
+
+
+def test_process_video_modo_stack_ignora_interp(tmp_path, caplog):
+    video = tmp_path / "clip.avi"
+    _write_clip(video, n_frames=4)
+    out = process_video(str(video), None, AstroFrameConfig(), "stack", 2, True, interp=3)
+    assert out.endswith(".png")
+    assert any("--interp não tem efeito no modo stack" in record.getMessage() for record in caplog.records)
+
+
 # ---------------------------------------------------------------------------
 # build_parser / main
 # ---------------------------------------------------------------------------
@@ -145,8 +207,8 @@ def test_main_autotune_exporta_config(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     out = tmp_path / "tuned.json"
     assert (
-        main(["autotune", "--samples", str(samples), "--budget", "0.3", "--seed", "7",
-              "--export", str(out)]) == 0
+        main(["autotune", "--samples", str(samples), "--budget", "0.3", "--seed", "7", "--export", str(out)])
+        == 0
     )
     assert out.exists()
 
@@ -155,8 +217,20 @@ def test_main_autotune_reset_e_perfil(tmp_path, monkeypatch):
     samples = _make_autotune_samples(tmp_path)
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     assert (
-        main(["autotune", "--samples", str(samples), "--budget", "0.2", "--reset",
-              "--profile", "cli-test", "--no-anneal"]) == 0
+        main(
+            [
+                "autotune",
+                "--samples",
+                str(samples),
+                "--budget",
+                "0.2",
+                "--reset",
+                "--profile",
+                "cli-test",
+                "--no-anneal",
+            ]
+        )
+        == 0
     )
 
 
@@ -183,6 +257,20 @@ def test_main_stack_n_fora_de_stack_avisa(tmp_path, caplog):
     video = tmp_path / "clip.avi"
     _write_clip(video, n_frames=3)
     assert main(["video", "--input", str(video), "--mode", "enhance", "--stack-n", "2"]) == 0
+
+
+def test_main_video_interp_passa_ao_process_video(monkeypatch, tmp_path):
+    captured = {}
+
+    def fake_process_video(*args, **kwargs):
+        captured["interp"] = args[6]
+        return "x.mp4"
+
+    monkeypatch.setattr("astroframe.ui.cli.process_video", fake_process_video)
+    video = tmp_path / "clip.avi"
+    _write_clip(video)
+    assert main(["video", "--input", str(video), "--mode", "enhance", "--interp", "3"]) == 0
+    assert captured["interp"] == 3
 
 
 def test_main_serve_lanca_gradio(monkeypatch):

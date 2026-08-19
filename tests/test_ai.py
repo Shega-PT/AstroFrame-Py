@@ -16,18 +16,30 @@ import pytest
 from astroframe.ai.rife import RifeInterpolator
 
 
+@pytest.fixture
+def sem_torch(monkeypatch):
+    """Simula a ausência do PyTorch (relevante mesmo com torch instalado)."""
+
+    def fake_import(name, *args, **kwargs):
+        if name == "torch":
+            raise ImportError("No module named 'torch'")
+        return builtins.__import__(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+
+
 def _bare_interpolator() -> RifeInterpolator:
     """Instância sem `__init__` (que exige torch); útil para os ramos sem PyTorch."""
     return object.__new__(RifeInterpolator)
 
 
-def test_available_false_sem_torch():
+def test_available_false_sem_torch(sem_torch):
     assert RifeInterpolator.available() is False
 
 
-def test_interpolate_sem_torch_levanta():
+def test_interpolate_sem_torch_levanta(sem_torch):
     frame = np.zeros((2, 2, 3), np.uint8)
-    with pytest.raises(RuntimeError, match="astroframe\\[rife\\]"):
+    with pytest.raises(RuntimeError, match="não pôde ser carregado"):
         _bare_interpolator().interpolate(frame, frame)
 
 

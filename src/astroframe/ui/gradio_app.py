@@ -660,9 +660,7 @@ def build_app(config: AstroFrameConfig | None = None) -> gr.Blocks:
                 )
                 with gr.Row():
                     at_samples = gr.Textbox(value="samples", label="Pasta de amostras")
-                    at_budget = gr.Slider(
-                        5.0, 300.0, value=60.0, step=5.0, label="Orçamento (segundos)"
-                    )
+                    at_budget = gr.Slider(5.0, 300.0, value=60.0, step=5.0, label="Orçamento (segundos)")
                     at_params = gr.Dropdown(
                         choices=list(ai_params.PARAM_SPECS),
                         multiselect=True,

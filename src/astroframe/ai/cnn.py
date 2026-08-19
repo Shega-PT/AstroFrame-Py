@@ -14,10 +14,10 @@ ReLU) — com duas cabeças:
   falsos positivos) e filtra os candidatos do Hough no fim de
   `find_all_disks` (`ai.disk_filter`) — **nunca** esvazia a lista detetada.
 
-Tudo NumPy (im2col vetorizado, sem dependências novas); `backend="torch"`
-é a aceleração opcional quando o PyTorch está instalado. Os pesos são
-guardados em `.npz` versionados (`Logs/weights/enhancer_cnn.npz` e
-`Logs/weights/disk_filter.npz`) e o treino é offline e determinístico.
+Tudo NumPy (im2col vetorizado, sem dependências novas), determinístico e
+testável offline. Os pesos são guardados em `.npz` versionados
+(`Logs/weights/enhancer_cnn.npz` e `Logs/weights/disk_filter.npz`) e o
+treino é offline e determinístico.
 """
 
 from __future__ import annotations
@@ -169,9 +169,12 @@ class SmallCNN:
         dc1 = dc1 * (c1 > 0)
         dconv1, db1, dx = conv2d_backward(dc1, x, self.conv1_w)
         return {
-            "conv1_w": dconv1, "conv1_b": db1,
-            "conv2_w": dconv2, "conv2_b": db2,
-            "conv3_w": dconv3, "conv3_b": db3,
+            "conv1_w": dconv1,
+            "conv1_b": db1,
+            "conv2_w": dconv2,
+            "conv2_b": db2,
+            "conv3_w": dconv3,
+            "conv3_b": db3,
         }
 
     def backward_classify(self, grad_probs: np.ndarray, cache: dict) -> dict[str, np.ndarray]:
@@ -187,9 +190,12 @@ class SmallCNN:
         dc1 = dc1 * (c1 > 0)
         dconv1, db1, _ = conv2d_backward(dc1, cache["x"], self.conv1_w)
         return {
-            "conv1_w": dconv1, "conv1_b": db1,
-            "conv2_w": dconv2, "conv2_b": db2,
-            "head_w": dhead, "head_b": dhead_b,
+            "conv1_w": dconv1,
+            "conv1_b": db1,
+            "conv2_w": dconv2,
+            "conv2_b": db2,
+            "head_w": dhead,
+            "head_b": dhead_b,
         }
 
     # --------------------------------------------------------- persistência
@@ -226,9 +232,7 @@ class SmallCNN:
             if int(data["schema_version"]) != SCHEMA_VERSION:
                 logger.warning("Modelo CNN com versão desconhecida: %s", path)
                 return None
-            model = cls(
-                mode=str(data["mode"]), k=int(data["k"]), n_in=int(data["n_in"])
-            )
+            model = cls(mode=str(data["mode"]), k=int(data["k"]), n_in=int(data["n_in"]))
             model.conv1_w = data["conv1_w"]
             model.conv1_b = data["conv1_b"]
             model.conv2_w = data["conv2_w"]
@@ -401,8 +405,12 @@ def _classify_loss(model: SmallCNN, X: np.ndarray, y: np.ndarray) -> float:
 
 
 def _params_copy(model: SmallCNN) -> dict:
-    data = {"conv1_w": model.conv1_w.copy(), "conv1_b": model.conv1_b.copy(),
-            "conv2_w": model.conv2_w.copy(), "conv2_b": model.conv2_b.copy()}
+    data = {
+        "conv1_w": model.conv1_w.copy(),
+        "conv1_b": model.conv1_b.copy(),
+        "conv2_w": model.conv2_w.copy(),
+        "conv2_b": model.conv2_b.copy(),
+    }
     if model.mode == "residual":
         data["conv3_w"] = model.conv3_w.copy()
         data["conv3_b"] = model.conv3_b.copy()

@@ -409,9 +409,7 @@ def test_export_trained(tmp_path):
     assert data["stats"]["rewards"] == 5
     assert data["deltas"]["param2"] == 3.0
     assert data["stabilizer"]["param2"] == config.stabilizer.param2 + 3
-    assert data["stabilizer"]["occluded_ratio"] == pytest.approx(
-        config.stabilizer.occluded_ratio + 0.02
-    )
+    assert data["stabilizer"]["occluded_ratio"] == pytest.approx(config.stabilizer.occluded_ratio + 0.02)
     assert "min_radius" not in data["stabilizer"]
     assert "min_dist" not in data["stabilizer"]
     assert data["stabilizer"]["max_radius"] == config.stabilizer.max_radius
@@ -623,8 +621,15 @@ def make_patch_pairs(n=6, seed=3):
 
 
 def test_estado_v1_para_v2_migra_sem_perda(tmp_path):
-    v1 = {"version": 1, "deltas": {"param1": 0.5}, "rewards": 3, "punishments": 1,
-          "round": 2, "rounds": [{"round": 1, "mode": "auto"}], "samples": {}}
+    v1 = {
+        "version": 1,
+        "deltas": {"param1": 0.5},
+        "rewards": 3,
+        "punishments": 1,
+        "round": 2,
+        "rounds": [{"round": 1, "mode": "auto"}],
+        "samples": {},
+    }
     path = tmp_path / "state.json"
     path.write_text(json.dumps(v1), encoding="utf-8")
     state = ValidatorState(path)
@@ -696,9 +701,7 @@ def test_auto_trainer_sem_recolha_de_patches(tmp_path, monkeypatch):
 
 
 def test_auto_trainer_filtra_com_cnn_sem_esvaziar(tmp_path, monkeypatch):
-    model, _ = fit_classifier(
-        make_patch_pairs()[0], make_patch_pairs()[1], epochs=2, seed=4
-    )
+    model, _ = fit_classifier(make_patch_pairs()[0], make_patch_pairs()[1], epochs=2, seed=4)
     model_path = tmp_path / "filter.npz"
     model.save(model_path)
     monkeypatch.setattr("validator.find_all_disks", lambda _f, _c: [CIRCLE])
@@ -708,9 +711,7 @@ def test_auto_trainer_filtra_com_cnn_sem_esvaziar(tmp_path, monkeypatch):
     state = ValidatorState(tmp_path / "validator_state.json")
     samples = [make_sample("a.jpg")]
     monkeypatch.setattr("validator.load_frame", lambda _s: np.zeros((100, 100, 3), dtype=np.uint8))
-    trainer = AutoTrainer(
-        samples, store, config, state, cnn_model_path=model_path, cnn_threshold=0.99
-    )
+    trainer = AutoTrainer(samples, store, config, state, cnn_model_path=model_path, cnn_threshold=0.99)
     assert trainer._filter is not None
     report = trainer.run_series()
     assert report.samples_done == 1  # filtro nunca esvazia → julgamento normal
@@ -720,7 +721,10 @@ def test_auto_trainer_cnn_model_path_inexistente(tmp_path, monkeypatch):
     monkeypatch.setattr("validator.find_all_disks", lambda _f, _c: [CIRCLE])
     trainer, state = make_auto_trainer(tmp_path, [CIRCLE], monkeypatch)
     trainer2 = AutoTrainer(
-        trainer.samples, trainer.store, trainer.config, state,
+        trainer.samples,
+        trainer.store,
+        trainer.config,
+        state,
         cnn_model_path=tmp_path / "ausente.npz",
     )
     assert trainer2._filter is None
@@ -805,8 +809,23 @@ def test_run_auto_headless_sem_amostras(tmp_path):
 
 def test_cli_auto_com_flags_cnn(tmp_path, capsys):
     root = make_samples_dir(tmp_path)
-    assert main(["--samples", str(root), "--auto", "--series", "1", "--epochs", "2",
-                 "--cnn-off", "--cnn-threshold", "0.4"]) == 0
+    assert (
+        main(
+            [
+                "--samples",
+                str(root),
+                "--auto",
+                "--series",
+                "1",
+                "--epochs",
+                "2",
+                "--cnn-off",
+                "--cnn-threshold",
+                "0.4",
+            ]
+        )
+        == 0
+    )
     assert "CNN desligada" in capsys.readouterr().out
 
 

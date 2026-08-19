@@ -147,9 +147,7 @@ FEEDBACK_PARAMS = (
 )
 
 # Parâmetros de valor inteiro (os restantes são floats).
-INT_PARAMS: frozenset[str] = frozenset(
-    path for path, spec in PARAM_SPECS.items() if spec.dtype is _INT
-)
+INT_PARAMS: frozenset[str] = frozenset(path for path, spec in PARAM_SPECS.items() if spec.dtype is _INT)
 
 
 def specs(group: str | None = None) -> list[ParamSpec]:

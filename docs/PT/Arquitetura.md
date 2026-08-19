@@ -146,7 +146,8 @@ Para estender este pipeline aos vídeos da Samsung Digital Camcorder com movimen
 # 4 Arquitetura de IA (v0.7.0)
 
 A camada de IA acrescenta auto-tuning e pequenas redes neuronais com um
-**núcleo NumPy puro** (PyTorch é opcional e nunca obrigatório). Tudo está
+**núcleo NumPy puro** (o PyTorch, obrigatório desde a v0.9.0, é usado apenas
+pela interpolação RIFE). Tudo está
 **desligado por omissão** (`tuning.enabled=false`, `ai.*`); um modelo em
 falta ou corrompido degrada silenciosamente e nunca bloqueia a pipeline.
 
@@ -229,7 +230,9 @@ Modelos: `Logs/weights/enhancer_cnn.npz` e `Logs/weights/disk_filter.npz`.
 ## 4.5 Segurança e ciclo de vida
 
 1. Tudo desligado por omissão; cada componente decide por si se está
-   disponível (`available`/`torch_available`/`load()`).
+   disponível (`available`/`torch_available`/`load()`); o PyTorch (obrigatório
+   desde a v0.9.0) é usado apenas pelo RIFE, carregado preguiçosamente pela
+   CLI `video --interp N`.
 2. Modelos versionados; carga falhada → `None` → comportamento idêntico ao
    modo sem IA.
 3. Todos os valores aprendidos passam pelo clamp do registry.

@@ -175,18 +175,18 @@ class TuningConfig:
 
 @dataclass
 class AIConfig:
-    """Redes neurais pequenas (opcionais, todas OFF por omissão).
+    """Redes neurais pequenas (todas OFF por omissão).
 
-    O núcleo é NumPy puro; `backend="torch"` ativa a aceleração opcional
-    quando o PyTorch está instalado (extra `astroframe[rife]` inclui torch).
-    `lstm_trajectory` melhora a anti-trepidação temporal prevendo o
-    centroide (extrapolação linear + LSTM opcional); `cnn_enhance` adiciona
-    um passo residual de melhoria aprendida ao final do `enhance_image`;
-    `disk_filter` (0–1) é o limiar de confiança da CNN para descartar falsos
-    positivos da deteção (0.0 = desligado; nunca esvazia a lista detetada).
+    O núcleo é NumPy puro (determinístico e sem dependências pesadas);
+    o PyTorch é usado exclusivamente pela interpolação RIFE (CLI `astroframe
+    video --interp N`). `lstm_trajectory` melhora a anti-trepidação temporal
+    prevendo o centroide (extrapolação linear + LSTM opcional); `cnn_enhance`
+    adiciona um passo residual de melhoria aprendida ao final do
+    `enhance_image`; `disk_filter` (0–1) é o limiar de confiança da CNN para
+    descartar falsos positivos da deteção (0.0 = desligado; nunca esvazia a
+    lista detetada).
     """
 
-    backend: str = "numpy"
     lstm_trajectory: bool = False
     cnn_enhance: bool = False
     disk_filter: float = 0.0

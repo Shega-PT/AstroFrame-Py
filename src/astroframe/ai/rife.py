@@ -1,9 +1,9 @@
-"""Interpolação de movimento opcional (RIFE via PyTorch).
+"""Interpolação de movimento RIFE via PyTorch.
 
-Dependência pesada e opcional: requer `pip install 'astroframe[rife]'`.
-Tudo é importado de forma preguiçosa — sem PyTorch instalado,
-`RifeInterpolator.available()` devolve False e `interpolate()` falha
-com uma mensagem clara, sem derrubar o resto do sistema.
+O PyTorch é uma dependência obrigatória desde a v0.9.0 (instalado por
+omissão; no CI usa-se o wheel CPU). O modelo é carregado de forma preguiçosa
+via `torch.hub` apenas quando a CLI `astroframe video --interp N` é usada;
+se o carregamento falhar, o CLI avisa e continua sem interpolação.
 """
 
 from __future__ import annotations
@@ -15,9 +15,9 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 _RIFE_HINT = (
-    "O RIFE requer o extra opcional: pip install 'astroframe[rife]'.\n"
-    "O modelo deve ser carregável via torch.hub (por exemplo, o repositório "
-    "hzwer/Practical-RIFE, fonte 'github', modelo 'IFNet')."
+    "O modelo RIFE não pôde ser carregado (falha de rede/`torch.hub` ou "
+    "repositório indisponível). Verifique a ligação e tente novamente; "
+    "a CLI `astroframe video` continua a funcionar sem interpolação."
 )
 
 

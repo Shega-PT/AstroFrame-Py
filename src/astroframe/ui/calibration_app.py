@@ -433,9 +433,7 @@ def build_calibration_app(
                             value="Círculo",
                             label="Forma",
                         )
-                        shape_diameter = gr.Slider(
-                            8, 1600, value=120, step=4, label="Diâmetro (px)"
-                        )
+                        shape_diameter = gr.Slider(8, 1600, value=120, step=4, label="Diâmetro (px)")
                         shape_ratio = gr.Slider(
                             0.1, 1.0, value=0.7, step=0.05, label="Proporção da elipse", visible=False
                         )

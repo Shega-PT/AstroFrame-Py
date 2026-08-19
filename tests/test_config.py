@@ -92,7 +92,6 @@ def test_tuning_config_por_omissao_desligado():
 
 def test_ai_config_por_omissao_tudo_desligado():
     cfg = AstroFrameConfig()
-    assert cfg.ai.backend == "numpy"
     assert cfg.ai.lstm_trajectory is False
     assert cfg.ai.cnn_enhance is False
     assert cfg.ai.disk_filter == 0.0
@@ -115,9 +114,7 @@ def test_yaml_round_trip_com_tuning_e_ai(tmp_path):
 
 def test_override_parcial_de_tuning_e_ai(tmp_path):
     path = tmp_path / "config.yaml"
-    path.write_text(
-        "tuning:\n  budget_s: 30\nai:\n  cnn_enhance: true\n", encoding="utf-8"
-    )
+    path.write_text("tuning:\n  budget_s: 30\nai:\n  cnn_enhance: true\n", encoding="utf-8")
     loaded = AstroFrameConfig.from_yaml(path)
     assert loaded.tuning.budget_s == pytest.approx(30.0)
     assert loaded.tuning.enabled is False

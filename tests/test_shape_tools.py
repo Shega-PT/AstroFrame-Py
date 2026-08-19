@@ -40,9 +40,7 @@ def _frame() -> np.ndarray:
 
 
 def _editor_value(n_layers: int = 1) -> dict:
-    return circles_to_layers(
-        _frame(), [DiskDetection(60, 50, 20) for _ in range(n_layers)]
-    )
+    return circles_to_layers(_frame(), [DiskDetection(60, 50, 20) for _ in range(n_layers)])
 
 
 # ---------------------------------------------------------------- shapes.py
@@ -129,8 +127,9 @@ def test_content_bounds_rgb_e_camadas_vazias():
     assert content_bounds(gray2d) == (40, 30, 44, 34)
     assert content_bounds(np.zeros((0, 0, 4), dtype=np.uint8)) is None
     assert content_center(np.zeros((*_SIZE, 4), dtype=np.uint8)) is None
-    np.testing.assert_array_equal(recenter_layer(np.zeros((*_SIZE, 4), dtype=np.uint8), 5, 5),
-                                  np.zeros((*_SIZE, 4), dtype=np.uint8))
+    np.testing.assert_array_equal(
+        recenter_layer(np.zeros((*_SIZE, 4), dtype=np.uint8), 5, 5), np.zeros((*_SIZE, 4), dtype=np.uint8)
+    )
 
 
 def test_translate_layer_sem_deslocamento_devolve_mesma_camada():
@@ -273,9 +272,7 @@ def test_load_item_view_devolve_preview_e_dropdown(tmp_path, monkeypatch):
         "astroframe.ui.calibration_app.find_all_disks",
         lambda frame, config=None: [DiskDetection(60, 50, 30)],
     )
-    value, info, preview, update, center, click_text = load_item_view(
-        _sample_key(root), str(root)
-    )
+    value, info, preview, update, center, click_text = load_item_view(_sample_key(root), str(root))
     assert preview is not None
     assert update["choices"] == ["Camada 1"]
     assert center is None

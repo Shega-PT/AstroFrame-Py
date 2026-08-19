@@ -315,10 +315,7 @@ def _concentric_companion(
     dist2 = (xs - cx) * (xs - cx) + (ys - cy) * (ys - cy)
     radii = np.arange(min_radius, r_max + 1)
     profile = np.array(
-        [
-            float(blurred[(dist2 >= (r - 2) * (r - 2)) & (dist2 < (r + 2) * (r + 2))].mean())
-            for r in radii
-        ]
+        [float(blurred[(dist2 >= (r - 2) * (r - 2)) & (dist2 < (r + 2) * (r + 2))].mean()) for r in radii]
     )
     i_min = int(np.argmin(profile))
     if radii[i_min] > 0.6 * r_max:

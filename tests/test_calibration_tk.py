@@ -46,9 +46,7 @@ def make_samples(tmp_path: Path, n: int = 1, gt: bool = False) -> Path:
         image, cx, cy = make_disk_image()
         cv2.imwrite(str(samples / name), image)
         if gt:
-            store.items[name] = CalibrationItem(
-                name, "image", None, 480, 360, [DiskDetection(cx, cy, 90)]
-            )
+            store.items[name] = CalibrationItem(name, "image", None, 480, 360, [DiskDetection(cx, cy, 90)])
     if gt:
         store.save()
     return samples
@@ -441,9 +439,7 @@ def test_validar_tudo_report_erros_e_sugestoes(root, tmp_path, monkeypatch):
     )
     store.save()
     (samples / "sample_1.jpg").write_bytes(b"corrompida")
-    monkeypatch.setattr(
-        calibration_tk, "find_all_disks", lambda frame, config: [DiskDetection(301, 140, 89)]
-    )
+    monkeypatch.setattr(calibration_tk, "find_all_disks", lambda frame, config: [DiskDetection(301, 140, 89)])
     app = build(root, samples)
     try:
         app._busy = True

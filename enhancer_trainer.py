@@ -77,9 +77,7 @@ def _l_channel(image_bgr: np.ndarray) -> np.ndarray:
 def degrade(enhanced_bgr: np.ndarray, rng: np.random.Generator) -> np.ndarray:
     """Degradação sintética: ruído gaussiano + desfoque sobre a melhoria limpa."""
     lab = cv2.cvtColor(enhanced_bgr, cv2.COLOR_BGR2LAB)
-    noisy = np.clip(
-        lab.astype(np.float64) + rng.normal(0.0, NOISE_SIGMA, lab.shape), 0, 255
-    ).astype(np.uint8)
+    noisy = np.clip(lab.astype(np.float64) + rng.normal(0.0, NOISE_SIGMA, lab.shape), 0, 255).astype(np.uint8)
     blurred = cv2.GaussianBlur(noisy, (BLUR_KSIZE, BLUR_KSIZE), 0)
     return cv2.cvtColor(blurred, cv2.COLOR_LAB2BGR)
 
@@ -415,10 +413,7 @@ def run_auto_headless(
     store = CalibrationStore(calibration_json(samples_dir))
     db = FeedbackDB()
 
-    print(
-        f"AstroFrame — treino automático da CNN de edição "
-        f"({len(samples)} amostras, {series} série(s))"
-    )
+    print(f"AstroFrame — treino automático da CNN de edição ({len(samples)} amostras, {series} série(s))")
     all_pairs: list[tuple[np.ndarray, np.ndarray]] = []
     champion_path: str | Path | None = None
     final_metrics: dict | None = None
@@ -726,7 +721,7 @@ class EnhancerTkApp:
                 (max(1, int(image.width * scale)), max(1, int(image.height * scale))),
                 self.Image.Resampling.LANCZOS,
             )
-        return self.ImageTk.PhotoImage(image)
+        return self.ImageTk.PhotoImage(image, master=self.top)
 
     def _record(self, valid: bool) -> None:
         if not self._precomputed:

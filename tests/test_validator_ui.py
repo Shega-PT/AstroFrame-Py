@@ -103,9 +103,7 @@ def fake_final_window(monkeypatch):
 # --------------------------------------------------------------- fluxo manual --
 
 
-def test_app_fluxo_completo_deteccao_julgamento_e_relatorio(
-    root, tmp_path, detect_one, fake_final_window
-):
+def test_app_fluxo_completo_deteccao_julgamento_e_relatorio(root, tmp_path, detect_one, fake_final_window):
     samples = make_samples_dir(tmp_path)
     app = validator.build_app(root, samples_dir=str(samples), state_path=str(samples / "v.json"))
     try:
@@ -256,8 +254,14 @@ def _fake_run_series_factory(window):
         if progress is not None:
             progress(1, 1, "sample_0.jpg", 0.90)
         return validator.AutoSeriesReport(
-            series=1, samples_done=1, samples_total=1, rewards=1, punishments=0,
-            threshold_end=0.90, report=None, errors=["leitura falhada"],
+            series=1,
+            samples_done=1,
+            samples_total=1,
+            rewards=1,
+            punishments=0,
+            threshold_end=0.90,
+            report=None,
+            errors=["leitura falhada"],
         )
 
     return fake_run_series
@@ -523,9 +527,7 @@ def test_app_deteçao_com_erro_mostra_mensagem(root, tmp_path, detect_one):
         app.root.destroy()
 
 
-def test_app_deteçao_teimosa_reavalia_ate_completar(
-    root, tmp_path, fake_final_window, monkeypatch
-):
+def test_app_deteçao_teimosa_reavalia_ate_completar(root, tmp_path, fake_final_window, monkeypatch):
     samples = make_samples_dir(tmp_path, n=1)
     monkeypatch.setattr(validator, "find_all_disks", lambda _f, _c: [GHOST])
     app = validator.build_app(root, samples_dir=str(samples), state_path=str(samples / "v.json"))
@@ -809,7 +811,11 @@ def test_auto_train_window_parar_entre_series(root, tmp_path, monkeypatch):
     def stopping_run_series(self, progress=None, should_stop=None, on_detect=None):
         win._stop = True
         return validator.AutoSeriesReport(
-            series=1, samples_done=1, samples_total=1, rewards=0, punishments=0,
+            series=1,
+            samples_done=1,
+            samples_total=1,
+            rewards=0,
+            punishments=0,
             threshold_end=0.90,
         )
 
@@ -855,8 +861,13 @@ def test_auto_train_window_mensagens_diretas(root, tmp_path, detect_one):
                 "series_done",
                 1,
                 validator.AutoSeriesReport(
-                    series=1, samples_done=1, samples_total=1, rewards=1, punishments=0,
-                    threshold_end=0.90, errors=["leitura falhada"],
+                    series=1,
+                    samples_done=1,
+                    samples_total=1,
+                    rewards=1,
+                    punishments=0,
+                    threshold_end=0.90,
+                    errors=["leitura falhada"],
                 ),
             )
         )

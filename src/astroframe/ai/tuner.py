@@ -154,16 +154,11 @@ class ProxyEval:
         h, w = frame.shape[:2]
         scale = self._scale_for(h, w)
         if scale < 1.0:
-            frame = cv2.resize(
-                frame, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA
-            )
+            frame = cv2.resize(frame, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
         return frame, scale
 
     def _cache_key(self, config: AstroFrameConfig) -> str:
-        values = {
-            path: round(pparams.get_param(config, path), 6)
-            for path in pparams.PARAM_SPECS
-        }
+        values = {path: round(pparams.get_param(config, path), 6) for path in pparams.PARAM_SPECS}
         raw = json.dumps(values, sort_keys=True, default=str).encode("utf-8")
         return hashlib.sha1(raw).hexdigest()[:16]
 
@@ -200,9 +195,9 @@ class ProxyEval:
         if detection is None:
             objective = stars / 5.0
         else:
-            objective = (
-                self.detection_weight * detection + (1.0 - self.detection_weight) * stars / 5.0
-            ) / (self.detection_weight + (1.0 - self.detection_weight))
+            objective = (self.detection_weight * detection + (1.0 - self.detection_weight) * stars / 5.0) / (
+                self.detection_weight + (1.0 - self.detection_weight)
+            )
         elapsed = time.monotonic() - start
         result = TuneReport(
             objective=_clamp01(objective),
@@ -224,9 +219,7 @@ class ProxyEval:
         if scale >= 1.0:
             return circle
         ry = int(circle.ry * scale) if circle.ry is not None else None
-        return DiskDetection(
-            int(circle.cx * scale), int(circle.cy * scale), int(circle.radius * scale), ry
-        )
+        return DiskDetection(int(circle.cx * scale), int(circle.cy * scale), int(circle.radius * scale), ry)
 
     def clear_cache(self) -> None:
         self._cache.clear()
@@ -394,8 +387,7 @@ def export_trained_config(
         "deltas": {k: round(v, 6) for k, v in deltas.items()},
         "params": {p: pparams.get_param(effective, p) for p in pparams.PARAM_SPECS},
         "stabilizer": {
-            spec.name: pparams.get_param(effective, spec.path)
-            for spec in pparams.specs("detect")
+            spec.name: pparams.get_param(effective, spec.path) for spec in pparams.specs("detect")
         },
         "report": report.to_dict(),
     }
@@ -423,11 +415,7 @@ def run_autotune(
     specs = pparams.specs()
     if params_filter:
         wanted = {name.strip() for name in params_filter.split(",") if name.strip()}
-        specs = [
-            spec
-            for spec in specs
-            if spec.name in wanted or spec.path in wanted
-        ]
+        specs = [spec for spec in specs if spec.name in wanted or spec.path in wanted]
     if not specs:
         raise ValueError("Nenhum parâmetro selecionado para o auto-tuning.")
     proxy = ProxyEval(

@@ -260,9 +260,9 @@ class CalibrationTkApp:
         row += 1
         shapes_row = ttk.Frame(panel)
         shapes_row.grid(row=row, column=0, columnspan=2, sticky="w")
-        ttk.Radiobutton(
-            shapes_row, text="Círculo", value="circle", variable=self.shape_kind
-        ).pack(side=tk.LEFT)
+        ttk.Radiobutton(shapes_row, text="Círculo", value="circle", variable=self.shape_kind).pack(
+            side=tk.LEFT
+        )
         ttk.Radiobutton(shapes_row, text="Elipse", value="ellipse", variable=self.shape_kind).pack(
             side=tk.LEFT, padx=(8, 0)
         )
@@ -273,16 +273,12 @@ class CalibrationTkApp:
         ttk.Label(panel, text="Raio X (px)").grid(row=row, column=0, sticky="w")
         ttk.Scale(
             panel, from_=MIN_SHAPE_SIZE, to=2000, variable=self.rx_var, command=self._on_rx_slider
-        ).grid(
-            row=row, column=1, sticky="ew"
-        )
+        ).grid(row=row, column=1, sticky="ew")
         row += 1
         ttk.Label(panel, text="Raio Y (px)").grid(row=row, column=0, sticky="w")
         ttk.Scale(
             panel, from_=MIN_SHAPE_SIZE, to=2000, variable=self.ry_var, command=self._on_ry_slider
-        ).grid(
-            row=row, column=1, sticky="ew"
-        )
+        ).grid(row=row, column=1, sticky="ew")
         row += 1
         self.shape_info = ttk.Label(panel, text="")
         self.shape_info.grid(row=row, column=0, columnspan=2, sticky="w")
@@ -298,10 +294,12 @@ class CalibrationTkApp:
             command=self._on_auto_detect_toggle,
         ).grid(row=row, column=0, columnspan=2, sticky="w")
         row += 1
-        ttk.Label(panel, text="1.ª passagem: desligada, desenhas tudo à mão e guardas;\n"
-                              "2.ª passagem: ligada, a deteção preenche e validas.", foreground="#666").grid(
-            row=row, column=0, columnspan=2, sticky="w"
-        )
+        ttk.Label(
+            panel,
+            text="1.ª passagem: desligada, desenhas tudo à mão e guardas;\n"
+            "2.ª passagem: ligada, a deteção preenche e validas.",
+            foreground="#666",
+        ).grid(row=row, column=0, columnspan=2, sticky="w")
         row += 1
         ttk.Label(panel, text="Parâmetros (re-detetam ao largar, com deteção ligada):").grid(
             row=row, column=0, columnspan=2, sticky="w", pady=(6, 0)
@@ -536,7 +534,7 @@ class CalibrationTkApp:
             pil = Image.fromarray(rgb)
             size = (max(1, round(self.img_w * self.scale)), max(1, round(self.img_h * self.scale)))
             scaled = pil.resize(size, Image.LANCZOS)
-            self._photo = ImageTk.PhotoImage(scaled)
+            self._photo = ImageTk.PhotoImage(scaled, master=self.canvas)
             self._photo_scale = self.scale
         canvas.create_image(self.ox, self.oy, anchor=tk.NW, image=self._photo)
 
@@ -593,9 +591,7 @@ class CalibrationTkApp:
         cx = min(self.img_w - 1, max(0, round(ix)))
         cy = min(self.img_h - 1, max(0, round(iy)))
         shape = (
-            DiskDetection(cx, cy, rx)
-            if self.shape_kind.get() == "circle"
-            else DiskDetection(cx, cy, rx, ry)
+            DiskDetection(cx, cy, rx) if self.shape_kind.get() == "circle" else DiskDetection(cx, cy, rx, ry)
         )
         self.shapes.append(shape)
         self.selected = len(self.shapes) - 1
@@ -668,8 +664,7 @@ class CalibrationTkApp:
                 ry = shape.ry if shape.ry is not None else shape.radius
                 self.ry_var.set(ry)
                 self.shape_info.config(
-                    text=f"Selecionada: centro ({shape.cx}, {shape.cy}) · "
-                    f"raio {shape.radius}×{ry} px"
+                    text=f"Selecionada: centro ({shape.cx}, {shape.cy}) · raio {shape.radius}×{ry} px"
                 )
             else:
                 self.shape_info.config(text="")
@@ -763,7 +758,7 @@ class CalibrationTkApp:
                 else "Sem ground truth para validar."
             ),
             (
-                f"Recall {report.recall*100:.0f}% · Precisão {report.precision*100:.0f}%"
+                f"Recall {report.recall * 100:.0f}% · Precisão {report.precision * 100:.0f}%"
                 f" · IoU médio {report.mean_iou:.2f}"
             ),
             f"Total: {report.total_matched} emparelhado(s), "
@@ -801,9 +796,7 @@ class CalibrationTkApp:
         self.root.mainloop()
 
 
-def build_app(
-    root: tk.Tk, samples_dir: str = "samples", config_path: str | None = None
-) -> CalibrationTkApp:
+def build_app(root: tk.Tk, samples_dir: str = "samples", config_path: str | None = None) -> CalibrationTkApp:
     """Constrói a janela (sem `mainloop`), para testes e para `run`."""
     config = AstroFrameConfig.from_yaml(config_path) if config_path else AstroFrameConfig()
     samples = scan_samples(samples_dir)
@@ -815,8 +808,7 @@ def run(samples_dir: str = "samples", config_path: str | None = None) -> None:
     """Lança a interface desktop de calibração."""
     if tk is None:  # pragma: no cover
         raise SystemExit(
-            "tkinter não está disponível neste ambiente.\n"
-            "No Debian/Ubuntu: sudo apt install python3-tk"
+            "tkinter não está disponível neste ambiente.\nNo Debian/Ubuntu: sudo apt install python3-tk"
         )
     root = tk.Tk()
     build_app(root, samples_dir=samples_dir, config_path=config_path).run()

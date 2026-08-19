@@ -45,10 +45,11 @@ def _sigmoid(x: np.ndarray) -> np.ndarray:
 
 
 def torch_available() -> bool:
-    """True se o PyTorch estiver instalado (aceleração opcional das redes).
+    """True se o PyTorch estiver instalado (usado pela interpolação RIFE).
 
-    O núcleo é sempre NumPy (rápido o suficiente para redes pequenas); com
-    PyTorch, `ai.backend=torch` permite usar `LSTMCellTorch`/`SmallCNNTorch`.
+    O núcleo das redes é sempre NumPy (rápido o suficiente para redes
+    pequenas e determinístico nos testes); o PyTorch é obrigatório desde a
+    v0.9.0 e alimenta exclusivamente o RIFE (`astroframe video --interp N`).
     """
     try:
         import torch  # noqa: F401
@@ -230,9 +231,7 @@ def target_deltas(run) -> np.ndarray:
     )
 
 
-def make_sequences(
-    history: list, seq_len: int = 8
-) -> tuple[np.ndarray, np.ndarray]:
+def make_sequences(history: list, seq_len: int = 8) -> tuple[np.ndarray, np.ndarray]:
     """Janelas deslizantes `(X, y)` do histórico: features → deltas seguintes."""
     if len(history) < 2:
         return np.zeros((0, seq_len, 9)), np.zeros((0, len(PREDICT_PARAMS)))
@@ -246,7 +245,7 @@ def make_sequences(
     X = np.zeros((len(X_list), seq_len, 9))
     y = np.zeros((len(X_list), len(PREDICT_PARAMS)))
     for i, (x, t) in enumerate(zip(X_list, y_list, strict=False)):
-        X[i, -len(x):] = x
+        X[i, -len(x) :] = x
         y[i] = t
     return X, y
 
@@ -390,7 +389,7 @@ class LSTMTuner:
         recent = history[-seq_len:]
         features = np.array([run_features(run) for run in recent])
         seq = np.zeros((seq_len, 9))
-        seq[-len(features):] = features
+        seq[-len(features) :] = features
         h, _ = self.cell.forward(seq)
         pred = self.head @ h + self.head_bias
         return {
@@ -497,7 +496,7 @@ class TrajectoryPredictor:
         ]
         deltas = np.array(pairs)
         seq = np.zeros((8, 2))
-        seq[-len(deltas):] = deltas
+        seq[-len(deltas) :] = deltas
         h = self._cell.forward_full(seq)[-1]
         last = points[-1]
         return float(last[0] + h[0]), float(last[1] + h[1])
@@ -531,7 +530,7 @@ def train_trajectory_model(
         for end in range(2, len(deltas) + 1):
             start = max(0, end - 6)
             seq = np.zeros((6, 2))
-            seq[- (end - start):] = deltas[start:end]
+            seq[-(end - start) :] = deltas[start:end]
             X_list.append(seq)
             y_list.append(deltas[end - 1])
     X = np.array(X_list)

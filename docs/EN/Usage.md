@@ -377,6 +377,7 @@ astroframe video --input eclipse.mp4                                  # enhance 
 astroframe video --input eclipse.mp4 --mode stabilize                 # only centers the disk
 astroframe video --input eclipse.mp4 --mode stack --stack-n 20        # stacks the 20 best frames
 astroframe video --input eclipse.mp4 --mode enhance --fast            # no denoising (fast)
+astroframe video --input eclipse.mp4 --interp 2                        # +2 RIFE intermediate frames per pair
 astroframe video --input eclipse.mp4 --output output.mp4              # output file name
 ```
 
@@ -384,6 +385,10 @@ astroframe video --input eclipse.mp4 --output output.mp4              # output f
   re-exported as MP4 (`<name>_stabilized.mp4` by default) with a progress bar.
   The temporal anti-jitter smooths the centroid (EMA) and keeps the last
   displacement when a frame has no detection.
+- **`--interp N`** — generates N intermediate frames per frame pair with
+  **RIFE** (PyTorch, mandatory since v0.9.0) and exports the video `(N+1)×`
+  smoother (`fps × (N+1)`); the model is downloaded on first use via
+  `torch.hub` — if it fails, the CLI warns and continues without interpolation.
 - **stack** — selects the N sharpest frames (lucky imaging), **centers each
   one** and combines them (median by default) into a single PNG.
 - `--fast` omits the slowest step (denoising) and greatly reduces the
@@ -465,7 +470,6 @@ All fields and types:
 ### `ai` (neural networks)
 | Field | Type | Default | Description |
 |---|---|---|
-| `backend` | str | `numpy` | Computation backend (`numpy` core; `torch` optional acceleration) |
 | `lstm_trajectory` | bool | `false` | Predicts the disk trajectory (anti-jitter) with the LSTM |
 | `cnn_enhance` | bool | `false` | CNN residual step after the unsharp mask (noise/smearing removal) |
 | `disk_filter` | float | `0.0` | CNN confidence threshold to filter detections (0 = off; never empties the list) |
@@ -509,7 +513,8 @@ All fields and types:
 - **Frames without a disk**: `center_and_stabilize` returns the frame
   unchanged (with a warning); in video, `AntiJitterStabilizer` reuses the last
   valid displacement.
-- **RIFE** (interpolation over jumps) is optional and requires PyTorch; see
+- **RIFE** (`--interp N`) — motion interpolation via PyTorch (mandatory
+  since v0.9.0); the model is loaded by `torch.hub` on first use; see
   [API.md](API.md).
 - **AI is off by default** — the auto-tuning and the neural networks only
   activate when configured (`tuning.enabled`, `ai.*`); a missing or corrupt

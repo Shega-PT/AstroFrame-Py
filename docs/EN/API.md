@@ -403,8 +403,9 @@ process_video(path, output, config, mode, stack_n, fast) -> str  # output path
 
 ## `astroframe.ai` (learning and auto-tuning)
 
-AI layer of v0.7.0: auto-tuning and small neural networks with a **pure NumPy
-core** (PyTorch is optional — `torch_available()`). Modules: `params`
+AI layer: auto-tuning and small neural networks with a **pure NumPy core**
+(PyTorch, mandatory since v0.9.0, powers only the RIFE interpolation).
+Modules: `params`
 (registry of tunable parameters), `tuner` (auto-tuning), `lstm` (temporal
 learning), `cnn` (residual enhancement + detection filter), `feedback`
 (learning by rating), `score` (automatic rating) and `rife` (interpolation).
@@ -419,10 +420,11 @@ class RifeInterpolator(repo, source="github", model_name="IFNet", device=None):
     .interpolate(frame_a, frame_b, n_interp=1) -> list[np.ndarray]
 ```
 
-- Needs `pip install -e ".[rife]"`. Accepts BGR; returns `n_interp`
-  intermediate frames in BGR. The model interface depends on the RIFE
-  repository used (the internal `_infer` is the point to adjust between
-  versions); without PyTorch it raises `RuntimeError` with instructions.
+- Used by the CLI `astroframe video --interp N`. Accepts BGR; returns
+  `n_interp` intermediate frames in BGR. The model interface depends on the
+  RIFE repository used (the internal `_infer` is the point to adjust between
+  versions); the CLI warns and continues without interpolation if the model
+  fails to load.
 
 ### `ai.params` (registry of tunable parameters)
 
@@ -541,7 +543,7 @@ with backprop-through-time, vectorized gates i/f/o/g — no new dependencies),
 used by two predictors.
 
 ```python
-torch_available() -> bool          # True if PyTorch is installed (optional)
+torch_available() -> bool          # True if PyTorch is installed (used by RIFE)
 
 class LSTMCell(n_in, n_hidden, rng=None):
     .forward(x_seq, h0=None) -> (h, cache)    # (T, n_in) → h, cache

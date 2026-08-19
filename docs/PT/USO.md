@@ -373,6 +373,7 @@ astroframe video --input eclipse.mp4                                  # modo enh
 astroframe video --input eclipse.mp4 --mode stabilize                 # só centra o disco
 astroframe video --input eclipse.mp4 --mode stack --stack-n 20        # stack dos 20 melhores frames
 astroframe video --input eclipse.mp4 --mode enhance --fast            # sem denoising (rápido)
+astroframe video --input eclipse.mp4 --interp 2                        # +2 frames intermédios RIFE por par
 astroframe video --input eclipse.mp4 --output saida.mp4               # nome do ficheiro de saída
 ```
 
@@ -380,6 +381,10 @@ astroframe video --input eclipse.mp4 --output saida.mp4               # nome do 
   re-exportado como MP4 (`<nome>_stabilized.mp4` por omissão) com barra de
   progresso. A anti-trepidação temporal suaviza o centroide (EMA) e mantém o
   último deslocamento quando um frame não tem deteção.
+- **`--interp N`** — gera N frames intermédios por par de frames com o
+  **RIFE** (PyTorch, obrigatório desde a v0.9.0) e exporta a `(N+1)×` mais
+  suave (`fps × (N+1)`); o primeiro download do modelo é feito via `torch.hub`
+  — se falhar, o CLI avisa e continua sem interpolação.
 - **stack** — seleciona os N frames mais nítidos (lucky imaging), **centraliza
   cada um** e combina-os (mediana por omissão) num único PNG.
 - `--fast` omite o passo mais lento (denoising) e reduz muito o tempo de
@@ -461,7 +466,6 @@ Todos os campos e tipos:
 ### `ai` (redes neuronais)
 | Campo | Tipo | Padrão | Descrição |
 |---|---|---|---|
-| `backend` | str | `numpy` | Backend de cálculo (`numpy` no núcleo; `torch` aceleração opcional) |
 | `lstm_trajectory` | bool | `false` | Prevê a trajetória do disco (anti-trepidação) com a LSTM |
 | `cnn_enhance` | bool | `false` | Passo residual CNN a seguir à máscara de nitidez (remoção de ruído/smearing) |
 | `disk_filter` | float | `0.0` | Limiar de confiança da CNN para filtrar deteções (0 = desligado; nunca esvazia a lista) |
@@ -505,7 +509,7 @@ Todos os campos e tipos:
 - **Frames sem disco**: `center_and_stabilize` devolve o frame inalterado
   (com aviso); em vídeo, o `AntiJitterStabilizer` reaproveita o último
   deslocamento válido (ou usa a previsão de trajetória com `ai.lstm_trajectory`).
-- **RIFE** (interpolação em saltos) é opcional e exige PyTorch; ver [API.md](API.md).
+- **RIFE** (`--interp N`) — interpolação de movimento via PyTorch (obrigatório desde a v0.9.0); o modelo é carregado por `torch.hub` na primeira utilização; ver [API.md](API.md).
 - **IA desligada por omissão** — `tuning.enabled`, `ai.lstm_trajectory`,
   `ai.cnn_enhance` e `ai.disk_filter` só ativam o que está explícito; sem
   modelos treinados em `Logs/weights/` (`.npz` versionados) a pipeline

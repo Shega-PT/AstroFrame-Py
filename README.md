@@ -30,7 +30,7 @@ Estabilização geométrica e melhoria automática de astrofotografias e astrov�
 
 - **Rede neuronal pequena (CNN, NumPy puro)** — um modelo **residual** remove ruído/smearing no passo pós-unsharp (`ai.cnn_enhance`) e um **classificador disco/ruído** pontua cada deteção para filtrar falsos positivos (`ai.disk_filter`); treino offline determinístico, modelos versionados em `Logs/weights/`; o **`enhancer_trainer.py`** treina a CNN residual (GUI lado a lado com Válido/Rejeitado, ou `--auto` com degradação sintética), comparando cada ronda com o **campeão** do banco.
 
-- **LSTM opcional** — previsão da trajetória do disco para estabilização (`ai.lstm_trajectory`); sem PyTorch: implementação NumPy nativa (torch é opcional).
+- **LSTM opcional** — previsão da trajetória do disco para estabilização (`ai.lstm_trajectory`); o núcleo é NumPy puro (o PyTorch alimenta apenas a interpolação RIFE).
 
 - **Interface Gradio** — três separadores: **Imagem** (Antes/Depois, sliders, zoom na coroa/borda), **Vídeo** (processamento ao vivo com os discos detetados, preview final em frames espaçados e exportação opcional) e **Auto-tune** (otimização com progresso e relatório). Ao carregar um vídeo, os **metadados** são lidos (ffprobe/OpenCV/EXIF) e os **parâmetros são sugeridos automaticamente** (ISO → denoising, resolução → raios do detetor, bitrate → compressão), mantendo-se editáveis.
 
@@ -47,6 +47,12 @@ pip install -e ".[dev]"
 ```
 
 Alternativa simples: `pip install -r requirements.txt`. Requer Python 3.10+.
+
+> [!NOTE]
+> O PyTorch é obrigatório desde a v0.9.0 (interpolação RIFE). Em Linux, o
+> PyPI instala por omissão a build CUDA (~2,5 GB); para a versão CPU apenas:
+> `pip install torch --index-url https://download.pytorch.org/whl/cpu` antes
+> da instalação do pacote (é o que o CI usa).
 
 > [!IMPORTANT]
 > Em Debian/Ubuntu recentes, `pip install` no Python do sistema falha com
@@ -126,7 +132,7 @@ degrada silenciosamente.
 - O vídeo exportado **não contém áudio** (`cv2.VideoWriter`); para preservar o som, junte a faixa original com ffmpeg:
   `ffmpeg -i original.mp4 -i processado.mp4 -c copy -map 0:a -map 1:v saida.mp4`
 
-- A interpolação RIFE é opcional e exige PyTorch (`pip install -e ".[rife]"`); a interface do modelo varia entre versões dos repositórios RIFE.
+- O PyTorch é obrigatório desde a v0.9.0 e alimenta a **interpolação RIFE** (`astroframe video --interp N` — suaviza o vídeo com N frames intermédios gerados por IA entre cada par de frames); se o modelo não carregar, o CLI avisa e continua sem interpolação. A interface do modelo varia entre versões dos repositórios RIFE.
 
 - O denoising é o passo mais lento (~1 s/frame a 480p); use `--fast` em vídeos grandes.
 
@@ -150,7 +156,7 @@ src/astroframe/
 ├── meta/         leitura de metadados (ffprobe/OpenCV/EXIF) e sugestões de parâmetros
 ├── calibration/  varrimento de exemplos, ground truth e validação da deteção
 ├── ui/           interface Gradio (Imagem/Vídeo/Auto-tune + Calibração) e CLI
-└── ai/           auto-tuning, LSTM e CNN em NumPy puro, feedback e RIFE opcional
+└── ai/           auto-tuning, LSTM e CNN em NumPy puro, feedback e RIFE (PyTorch)
 ```
 
 ## Licença

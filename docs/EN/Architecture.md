@@ -115,8 +115,12 @@ def process_image_pipeline(input_image):
 
 # Minimal Interface with Gradio
 with gr.Blocks(title="AstroFrame") as demo:
-    gr.Markdown("# AstroFrame — geometric stabilization and automatic enhancement of astrophotographs and astrovideos")
-    gr.Markdown("Detects celestial bodies (Sun, Moon, planets, comets) and stabilizes and enhances their photos and videos automatically.")
+    gr.Markdown(
+        "# AstroFrame — geometric stabilization and automatic enhancement of astrophotographs and astrovideos"
+    )
+    gr.Markdown(
+        "Detects celestial bodies (Sun, Moon, planets, comets) and stabilizes and enhances their photos and videos automatically."
+    )
 
     with gr.Row():
         input_img = gr.Image(label="Original Photo/Frame")
@@ -135,7 +139,8 @@ if __name__ == "__main__":
 
 Introduced in v0.7.0. The pipeline parameters are no longer only manual:
 a deterministic optimizer searches them against the calibration samples, and
-small neural networks (pure NumPy — no new dependencies; PyTorch is optional)
+small neural networks (pure NumPy — no new dependencies; PyTorch, mandatory
+since v0.9.0, is used only by the RIFE interpolation)
 learn from the run history. **Everything is off by default**
 (`tuning.enabled=false`, `ai.*`) and degrades silently — a missing or corrupt
 model never blocks the pipeline.
@@ -185,7 +190,7 @@ automatically to every run of the same profile. Entry points: the CLI
 
 A single 1-layer LSTM cell implemented by hand in NumPy (forward + backward
 with backprop-through-time, vectorized — no torch dependency; `torch_available()`
-reports the optional PyTorch). Two applications:
+reports the PyTorch used only by the RIFE interpolation). Two applications:
 
 - **`LSTMTuner`** — trained offline on the feedback history (one run = one
   timestep: star ratings + metrics; sliding windows, validation and early

@@ -234,17 +234,13 @@ def test_find_all_disks_eclipse_total_encontra_companheiro_concentrico(monkeypat
 def test_is_occluded_artifact_anel_fora_da_imagem_nao_e_artefacto():
     cfg = AstroFrameConfig().stabilizer
     gray = np.zeros((360, 480), dtype=np.uint8)
-    assert not _is_occluded_artifact(
-        gray, DiskDetection(-7, 100, 5), DiskDetection(100, 100, 120), 1.0, cfg
-    )
+    assert not _is_occluded_artifact(gray, DiskDetection(-7, 100, 5), DiskDetection(100, 100, 120), 1.0, cfg)
 
 
 def test_is_occluded_artifact_candidato_fora_da_imagem_nao_e_artefacto():
     cfg = AstroFrameConfig().stabilizer
     gray = np.zeros((360, 480), dtype=np.uint8)
-    assert not _is_occluded_artifact(
-        gray, DiskDetection(485, 100, 5), DiskDetection(100, 100, 600), 1.0, cfg
-    )
+    assert not _is_occluded_artifact(gray, DiskDetection(485, 100, 5), DiskDetection(100, 100, 600), 1.0, cfg)
 
 
 def test_concentric_companion_primario_junto_ao_bordo_devolve_none():

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "astroframe"
-version = "0.5.0"
+version = "0.9.0"
 description = "Estabilização geométrica e melhoria automática de astrofotografias e astrovídeos"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -23,10 +23,11 @@ dependencies = [
     "gradio>=4.0",
     "pyyaml>=6.0",
     "tqdm>=4.65",
+    "Pillow>=10.0",
+    "torch>=2.0",
 ]
 
 [project.optional-dependencies]
-rife = ["torch>=2.0"]
 dev = ["pytest>=7.0", "ruff>=0.6"]
 
 [project.scripts]

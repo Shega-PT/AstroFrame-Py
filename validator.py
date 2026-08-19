@@ -978,9 +978,7 @@ def train_classifier_round(
             db.log("info", "validator", f"Série {round_n}: sem patches suficientes para a CNN")
         return {"skipped": True}
     warm = SmallCNN.load(champion_path) if champion_path else None
-    model, fit = fit_classifier(
-        positives, negatives, model=warm, epochs=epochs, seed=seed
-    )
+    model, fit = fit_classifier(positives, negatives, model=warm, epochs=epochs, seed=seed)
     accuracy = classifier_accuracy(model, positives, negatives, seed)
     staged = CNN_MODEL_DIR / f"disk_filter_r{round_n}.npz"
     staged.parent.mkdir(parents=True, exist_ok=True)
@@ -1021,9 +1019,7 @@ def train_classifier_round(
         "dataset": len(positives) + len(negatives),
     }
     report_path = logs_ia_dir() / f"disk_filter_round_{round_n}.json"
-    report_path.write_text(
-        json.dumps({**record, **metrics}, indent=2, ensure_ascii=False), encoding="utf-8"
-    )
+    report_path.write_text(json.dumps({**record, **metrics}, indent=2, ensure_ascii=False), encoding="utf-8")
     state.cnn_series.append(record)
     state.save()
     return {
@@ -1547,7 +1543,7 @@ class ValidatorTkApp:
             pil = Image.fromarray(rgb)
             size = (max(1, round(self.img_w * self.scale)), max(1, round(self.img_h * self.scale)))
             scaled = pil.resize(size, Image.LANCZOS)
-            self._photo = ImageTk.PhotoImage(scaled)
+            self._photo = ImageTk.PhotoImage(scaled, master=self.canvas)
             self._photo_scale = self.scale
         canvas.create_image(self.ox, self.oy, anchor=tk.NW, image=self._photo)
 
@@ -1668,19 +1664,16 @@ class Tooltip:
 
 # Texto de ajuda (ⓘ) de cada parâmetro treinável no relatório final.
 _PARAM_TOOLTIPS = {
-    "param2": "Limiar de acumulador do Hough: alto filtra ruído, baixo apanha "
-              "bordos de contraste fraco.",
+    "param2": "Limiar de acumulador do Hough: alto filtra ruído, baixo apanha bordos de contraste fraco.",
     "param1": "Sensibilidade do gradiente (Canny) antes do Hough: sobe para "
-              "ignorar texturas, desce para apanhar limbo suave.",
+    "ignorar texturas, desce para apanhar limbo suave.",
     "dp": "Inverso da resolução do acumulador: alto acelera (menos precisão), "
-          "baixo afia o centro do círculo.",
+    "baixo afia o centro do círculo.",
     "gaussian_kernel_size": "Tamanho do kernel do desfoque gaussiano aplicado "
-                            "antes do Hough (ímpar forçado).",
+    "antes do Hough (ímpar forçado).",
     "gaussian_sigma": "Sigma do desfoque: sobe com o ruído da imagem.",
-    "occluded_ratio": "Fração do disco coberta por outro que anula o disco "
-                      "oculto (artefacto).",
-    "occluded_ring": "Largura do anel escuro exigido para o disco interior "
-                     "(ex.: a Lua diante do Sol).",
+    "occluded_ratio": "Fração do disco coberta por outro que anula o disco oculto (artefacto).",
+    "occluded_ring": "Largura do anel escuro exigido para o disco interior (ex.: a Lua diante do Sol).",
 }
 
 
@@ -1753,9 +1746,7 @@ class AutoTrainWindow:
         ttk.Checkbutton(
             preview_row, text="Pré-visualizar deteções em tempo real", variable=self.preview_var
         ).pack(side=tk.LEFT)
-        ttk.Label(preview_row, text="ⓘ", foreground="#0a7", cursor="hand2").pack(
-            side=tk.LEFT, padx=(4, 0)
-        )
+        ttk.Label(preview_row, text="ⓘ", foreground="#0a7", cursor="hand2").pack(side=tk.LEFT, padx=(4, 0))
         Tooltip(
             preview_row.winfo_children()[-1],
             "Mostra cada imagem a ser analisada com os círculos detetados "
@@ -1892,8 +1883,13 @@ class AutoTrainWindow:
                         negatives.extend(trainer.negatives)
                         score = report.report.score if report.report is not None else None
                         result = train_classifier_round(
-                            positives, negatives, state, current, score,
-                            epochs=60, champion_path=champion["path"],
+                            positives,
+                            negatives,
+                            state,
+                            current,
+                            score,
+                            epochs=60,
+                            champion_path=champion["path"],
                         )
                         if result is not None and not result["skipped"]:
                             if result["champion_path"] is not None:
@@ -1954,8 +1950,7 @@ class AutoTrainWindow:
                     )
                     if report.cnn_positives or report.cnn_negatives:
                         self._append_report(
-                            f"  patches CNN recolhidos: +{report.cnn_positives} ✓ / "
-                            f"{report.cnn_negatives} ✗"
+                            f"  patches CNN recolhidos: +{report.cnn_positives} ✓ / {report.cnn_negatives} ✗"
                         )
                     for error in report.errors:
                         self._append_report(f"  ! {error}")
@@ -2007,8 +2002,7 @@ class AutoTrainWindow:
             for record in state.cnn_series:
                 promoted = "PROMOVIDA" if record["promoted"] else "mantém campeão"
                 lines.append(
-                    f"  série {record['round']}: precisão {100 * record['accuracy']:.1f}% "
-                    f"· {promoted}"
+                    f"  série {record['round']}: precisão {100 * record['accuracy']:.1f}% · {promoted}"
                 )
         lines.append("")
         lines.append(f"Config treinada exportada: {export_path}")
@@ -2060,7 +2054,9 @@ class AutoTrainWindow:
         scale = min(cw / w, ch / h)
         size = (max(1, round(w * scale)), max(1, round(h * scale)))
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        self._preview_photo = ImageTk.PhotoImage(Image.fromarray(rgb).resize(size, Image.LANCZOS))
+        self._preview_photo = ImageTk.PhotoImage(
+            Image.fromarray(rgb).resize(size, Image.LANCZOS), master=self.preview
+        )
         self.preview.delete("all")
         ox = (cw - size[0]) / 2.0
         oy = (ch - size[1]) / 2.0
@@ -2176,7 +2172,8 @@ class FinalReportWindow:
             center = f"{item.mean_center_error:.1f}" if item.mean_center_error is not None else "—"
             radius = f"{item.mean_radius_error_pct:+.0f}" if item.mean_radius_error_pct is not None else "—"
             self.tree.insert(
-                "", tk.END,
+                "",
+                tk.END,
                 values=(
                     item.label,
                     item.n_manual,
@@ -2214,19 +2211,27 @@ class FinalReportWindow:
             help_label.pack(side=tk.LEFT, padx=(4, 0))
             Tooltip(help_label, _PARAM_TOOLTIPS.get(key, ""))
             self._vars[("reward", key)] = tk.DoubleVar(value=REWARD_DELTAS.get(key, 0.0))
-            ttk.Spinbox(weights, from_=-100.0, to=100.0, increment=0.25, width=8,
-                        textvariable=self._vars[("reward", key)]).grid(
-                row=r, column=1, sticky="w"
-            )
+            ttk.Spinbox(
+                weights,
+                from_=-100.0,
+                to=100.0,
+                increment=0.25,
+                width=8,
+                textvariable=self._vars[("reward", key)],
+            ).grid(row=r, column=1, sticky="w")
             self._vars[("punish", key)] = tk.DoubleVar(value=PUNISH_DELTAS.get(key, 0.0))
-            ttk.Spinbox(weights, from_=-100.0, to=100.0, increment=0.25, width=8,
-                        textvariable=self._vars[("punish", key)]).grid(
-                row=r, column=2, sticky="w", padx=(12, 0)
-            )
+            ttk.Spinbox(
+                weights,
+                from_=-100.0,
+                to=100.0,
+                increment=0.25,
+                width=8,
+                textvariable=self._vars[("punish", key)],
+            ).grid(row=r, column=2, sticky="w", padx=(12, 0))
 
-        deltas = ", ".join(
-            f"{key} {value:+.1f}" for key, value in sorted(self.state.deltas.items())
-        ) or "nenhum"
+        deltas = (
+            ", ".join(f"{key} {value:+.1f}" for key, value in sorted(self.state.deltas.items())) or "nenhum"
+        )
         ttk.Label(
             weights,
             text=f"Deltas aprendidos até agora: {deltas}",
@@ -2238,19 +2243,33 @@ class FinalReportWindow:
         actions.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(8, 0))
         ttk.Label(actions, text="IoU mínimo do treino automático (≥ 0.90):").pack(side=tk.LEFT)
         self.iou_var = tk.DoubleVar(value=self.app.auto_iou_min)
-        ttk.Scale(actions, from_=AUTO_IOU_MIN, to=AUTO_IOU_MAX, variable=self.iou_var,
-                  command=lambda _v: self.iou_value_label.config(text=f"{self.iou_var.get():.2f}")
-                  ).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(6, 0))
+        ttk.Scale(
+            actions,
+            from_=AUTO_IOU_MIN,
+            to=AUTO_IOU_MAX,
+            variable=self.iou_var,
+            command=lambda _v: self.iou_value_label.config(text=f"{self.iou_var.get():.2f}"),
+        ).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(6, 0))
         self.iou_value_label = ttk.Label(actions, text=f"{self.iou_var.get():.2f}", width=5)
         self.iou_value_label.pack(side=tk.LEFT, padx=(4, 0))
         self.apply_btn = tk.Button(
-            actions, text="Aplicar", command=self.apply, bg="#1e7a3a", fg="white",
-            font=("", 10, "bold"), padx=12
+            actions,
+            text="Aplicar",
+            command=self.apply,
+            bg="#1e7a3a",
+            fg="white",
+            font=("", 10, "bold"),
+            padx=12,
         )
         self.apply_btn.pack(side=tk.RIGHT, padx=(12, 0))
         self.save_btn = tk.Button(
-            actions, text="Salvar", command=self.save, bg="#2d6da8", fg="white",
-            font=("", 10, "bold"), padx=12
+            actions,
+            text="Salvar",
+            command=self.save,
+            bg="#2d6da8",
+            fg="white",
+            font=("", 10, "bold"),
+            padx=12,
         )
         self.save_btn.pack(side=tk.RIGHT, padx=(6, 0))
         ttk.Button(actions, text="Fechar", command=self.top.destroy).pack(side=tk.RIGHT)
@@ -2346,9 +2365,7 @@ def run_check(
     store = CalibrationStore(calibration_json(samples_dir))
 
     print(f"AstroFrame — verificação automática da deteção ({len(samples)} amostras)")
-    deltas_text = " · ".join(
-        f"{key} {state.deltas.get(key, 0):+.2f}" for key in TRAINABLE_PARAMS
-    )
+    deltas_text = " · ".join(f"{key} {state.deltas.get(key, 0):+.2f}" for key in TRAINABLE_PARAMS)
     print(f"Deltas aprendidos: {deltas_text}")
     rows: list[tuple[str, list[DiskDetection], list[DiskDetection]]] = []
     errors: list[str] = []
@@ -2456,8 +2473,14 @@ def run_auto_headless(
                 )
             score = report.report.score if report.report is not None else None
             result = train_classifier_round(
-                positives, negatives, state, current, score,
-                epochs=epochs, champion_path=champion_path, db=db,
+                positives,
+                negatives,
+                state,
+                current,
+                score,
+                epochs=epochs,
+                champion_path=champion_path,
+                db=db,
             )
             if result is not None and not result["skipped"]:
                 if result["champion_path"] is not None:

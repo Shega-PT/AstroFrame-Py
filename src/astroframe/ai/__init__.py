@@ -4,12 +4,12 @@
   passos e deltas de treino de toda a pipeline).
 - `tuner` — auto-tuning determinístico e limitado de todos os parâmetros
   (hill-climbing com proxy de avaliação rápida e persistência por perfil).
-- `lstm` — pequena LSTM (NumPy/torch) para antecipar a trajetória do
+- `lstm` — pequena LSTM (NumPy) para antecipar a trajetória do
   centroide em frames sem deteção (anti-trepidação temporal).
-- `cnn` — pequena CNN (NumPy/torch) com duas cabeças: residual (melhoria
+- `cnn` — pequena CNN (NumPy) com duas cabeças: residual (melhoria
   aprendida de imagens) e classificadora (filtro de falsos positivos).
-- `rife` — interpolação de movimento opcional (requer PyTorch, extra
-  `astroframe[rife]`); não é importada por defeito.
+- `rife` — interpolação de movimento RIFE via PyTorch (obrigatório desde a
+  v0.9.0; carregado de forma preguiçosa pela CLI `astroframe video --interp N`).
 - `score` — avaliação automática da qualidade (0–5 estrelas) com métricas.
 - `feedback` — banco local de aprendizagem (recompensa/punição por estrelas).
 """

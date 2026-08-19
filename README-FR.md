@@ -23,7 +23,8 @@ Stabilisation géométrique et amélioration automatique d'astrophotographies et
 
 **IA intégrée (v0.7)** — l'apprentissage par feedback est complété par un
 **auto-réglage automatique** et de petites réseaux **LSTM/CNN** en NumPy pur
-(sans dépendance ; torch est facultatif pour l'accélération). Toute l'IA est
+(le noyau reste NumPy ; PyTorch, obligatoire depuis la v0.9.0, alimente
+uniquement l'interpolation RIFE). Toute l'IA est
 **désactivée par défaut** (sections `[tuning]` et `[ai]` du config) : un modèle
 manquant ou corrompu **dégrade silencieusement** et ne bloque jamais le
 pipeline.
@@ -37,6 +38,12 @@ pip install -e ".[dev]"
 ```
 
 Alternative simple : `pip install -r requirements.txt`. Nécessite Python 3.10+.
+
+> [!NOTE]
+> PyTorch est obligatoire depuis la v0.9.0 (interpolation RIFE). Sous Linux,
+> PyPI installe la build CUDA par défaut (~2,5 Go) ; pour la version CPU
+> seule : `pip install torch --index-url https://download.pytorch.org/whl/cpu`
+> avant l'installation du paquet (c'est ce qu'utilise le CI).
 
 > [!IMPORTANT]
 > Sur Debian/Ubuntu récents, `pip install` sur le Python système échoue avec
@@ -95,9 +102,11 @@ compare la détection automatique avec le ground truth sur tous les échantillon
 - La vidéo exportée **ne contient pas d'audio** (`cv2.VideoWriter`) ; pour
   préserver le son, fusionnez la piste originale avec ffmpeg :
   `ffmpeg -i original.mp4 -i traitee.mp4 -c copy -map 0:a -map 1:v sortie.mp4`
-- L'interpolation RIFE est facultative et exige PyTorch
-  (`pip install -e ".[rife]"`) ; l'interface du modèle varie entre les
-  versions des dépôts RIFE.
+- PyTorch est obligatoire depuis la v0.9.0 et alimente l'**interpolation RIFE**
+  (`astroframe video --interp N` — lisse la vidéo avec N trames intermédiaires
+  générées par IA entre chaque paire de trames) ; si le modèle ne charge pas,
+  le CLI prévient et continue sans interpolation. L'interface du modèle varie
+  entre les versions des dépôts RIFE.
 - Le débruitage est l'étape la plus lente (~1 s/frame en 480p) ; utilisez
   `--fast` sur les grandes vidéos.
 

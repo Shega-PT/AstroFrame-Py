@@ -119,18 +119,18 @@ def test_hill_climb_nao_muta_a_base():
 
 def test_hill_climb_orcamento_zero_somente_avalia_a_base():
     fake = _FakeEval()
-    result = BoundedHillClimb(
-        pparams.specs("enhance"), budget_s=0.0, seed=1
-    ).optimize(fake, AstroFrameConfig())
+    result = BoundedHillClimb(pparams.specs("enhance"), budget_s=0.0, seed=1).optimize(
+        fake, AstroFrameConfig()
+    )
     assert result.evaluations == 1
 
 
 def test_hill_climb_com_start_deltas_aplica_seed():
     base = AstroFrameConfig()
     fake = _FakeEval()
-    result = BoundedHillClimb(
-        pparams.specs("enhance"), budget_s=0.0, seed=1
-    ).optimize(fake, base, start_deltas={"clahe.clip_limit": 0.5})
+    result = BoundedHillClimb(pparams.specs("enhance"), budget_s=0.0, seed=1).optimize(
+        fake, base, start_deltas={"clahe.clip_limit": 0.5}
+    )
     assert result.config.clahe.clip_limit == pytest.approx(3.5)
 
 

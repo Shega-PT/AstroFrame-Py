@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 import cv2
+import numpy as np
 from tqdm import tqdm
 
 from astroframe import __version__
@@ -69,10 +70,13 @@ def process_video(
     mode: str,
     stack_n: int | None,
     fast: bool,
+    interp: int = 0,
 ) -> str:
     if mode == "stack":
         if fast:
             logger.info("A opção --fast não tem efeito no modo stack.")
+        if interp:
+            logger.warning("A opção --interp não tem efeito no modo stack; a ignorar.")
         best: list[tuple[float, object]] = []
         with FrameReader(path) as reader:
             for frame in _progress(reader, "Seleção de frames"):
@@ -92,12 +96,24 @@ def process_video(
         "Nota: o áudio não é copiado (cv2.VideoWriter). Para preservar o som, "
         "junte a faixa do original ao ficheiro exportado com ffmpeg."
     )
+    interp = max(0, int(interp))
+    interpolator = None
+    if interp:
+        try:
+            from astroframe.ai.rife import RifeInterpolator
+
+            interpolator = RifeInterpolator(repo="hzwer/Practical-RIFE", model_name="IFNet")
+        except Exception as exc:
+            logger.warning("Interpolação RIFE indisponível (%s); a continuar sem ela.", exc)
+            interpolator = None
+            interp = 0
     engine = AntiJitterStabilizer(config=config)
     with FrameReader(path) as reader:
-        writer = cv2.VideoWriter(out_path, fourcc, reader.fps or 30.0, reader.size)
+        writer = cv2.VideoWriter(out_path, fourcc, (reader.fps or 30.0) * (interp + 1), reader.size)
         if not writer.isOpened():
             raise OSError(f"Não foi possível abrir o escritor de vídeo: {out_path}")
         try:
+            previous: np.ndarray | None = None
             for frame in _progress(reader, "Estabilização"):
                 stabilized, _detection = engine.stabilize(frame)
                 frame_out = (
@@ -111,7 +127,11 @@ def process_video(
                         DiskDetection(reader.size[0] // 2, reader.size[1] // 2, detection.radius),
                         config,
                     )
+                if interpolator is not None and previous is not None:
+                    for middle in interpolator.interpolate(previous, frame_out, interp):
+                        writer.write(middle)
                 writer.write(frame_out)
+                previous = frame_out
         finally:
             writer.release()
     logger.info("Vídeo processado -> %s", out_path)
@@ -151,8 +171,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="astroframe",
         description=(
-            "AstroFrame — estabilização geométrica e melhoria automática de "
-            "astrofotografias e astrovídeos."
+            "AstroFrame — estabilização geométrica e melhoria automática de astrofotografias e astrovídeos."
         ),
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
@@ -183,6 +202,15 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Nº de melhores frames para stacking (padrão: config.stacking.n_best)",
     )
+    video.add_argument(
+        "--interp",
+        type=int,
+        default=0,
+        help=(
+            "Nº de frames intermédios gerados por IA (RIFE) entre cada par de frames; "
+            "o vídeo de saída fica (N+1)× mais suave (precisa de PyTorch)"
+        ),
+    )
 
     template = sub.add_parser("config-template", help="Gera um config.yaml com os valores por omissão")
     template.add_argument("--output", default="config.yaml")
@@ -200,9 +228,7 @@ def build_parser() -> argparse.ArgumentParser:
         "autotune",
         help="Otimiza todos os parâmetros da pipeline contra as amostras de samples/",
     )
-    autotune.add_argument(
-        "--samples", default="samples", help="Pasta com as imagens/vídeos de exemplo"
-    )
+    autotune.add_argument("--samples", default="samples", help="Pasta com as imagens/vídeos de exemplo")
     autotune.add_argument("--config", default=None, help="Caminho para um config.yaml (base)")
     autotune.add_argument(
         "--budget",
@@ -259,7 +285,13 @@ def main(argv: list[str] | None = None) -> int:
             if args.mode != "stack" and args.stack_n is not None:
                 logger.warning("--stack-n só tem efeito no modo stack; a ignorar.")
             process_video(
-                args.input, args.output, _load_config(args.config), args.mode, args.stack_n, args.fast
+                args.input,
+                args.output,
+                _load_config(args.config),
+                args.mode,
+                args.stack_n,
+                args.fast,
+                args.interp,
             )
         elif args.command == "config-template":
             _load_config(None).to_yaml(args.output)

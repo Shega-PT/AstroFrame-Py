@@ -345,8 +345,7 @@ class FeedbackDB:
         """Regista uma entrada no log local do sistema (`logs`)."""
         with self._connect() as conn:
             cur = conn.execute(
-                "INSERT INTO logs (ts, level, component, message, details)"
-                " VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO logs (ts, level, component, message, details) VALUES (?, ?, ?, ?, ?)",
                 (
                     time.strftime("%Y-%m-%d %H:%M:%S"),
                     level,
@@ -369,8 +368,7 @@ class FeedbackDB:
                 ).fetchall()
             else:
                 rows = conn.execute(
-                    "SELECT ts, level, component, message, details FROM logs"
-                    " ORDER BY id DESC LIMIT ?",
+                    "SELECT ts, level, component, message, details FROM logs ORDER BY id DESC LIMIT ?",
                     (limit,),
                 ).fetchall()
         return [

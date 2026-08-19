@@ -391,7 +391,7 @@ process_video(path, output, config, mode, stack_n, fast) -> str  # chemin de sor
   si rien n'a été traité. `mode="stack"` centre les frames avant
   l'empilement. L'exportation vidéo ne copie pas l'audio (limité par OpenCV).
 
-## `astroframe.ai` (IA : auto-réglage, LSTM/CNN, RIFE facultatif)
+## `astroframe.ai` (IA : auto-réglage, LSTM/CNN, RIFE via PyTorch)
 
 Toute l'IA est **désactivée par défaut** (`tuning.enabled=false`, `ai.*` aux
 valeurs par défaut) ; un modèle manquant ou corrompu dégrade **silencieusement**
@@ -403,10 +403,11 @@ class RifeInterpolator(repo, source="github", model_name="IFNet", device=None):
     .interpolate(frame_a, frame_b, n_interp=1) -> list[np.ndarray]
 ```
 
-- Nécessite `pip install -e ".[rife]"`. Accepte BGR ; retourne `n_interp`
-  frames intermédiaires en BGR. L'interface du modèle dépend du dépôt RIFE
-  utilisé (le `_infer` interne est le point à ajuster entre versions) ; sans
-  PyTorch il lève `RuntimeError` avec des instructions.
+- Utilisé par le CLI `astroframe video --interp N`. Accepte BGR ; retourne
+  `n_interp` frames intermédiaires en BGR. L'interface du modèle dépend du
+  dépôt RIFE utilisé (le `_infer` interne est le point à ajuster entre
+  versions) ; le CLI prévient et continue sans interpolation si le modèle ne
+  charge pas.
 
 ### `ai.score` (évaluation automatique)
 
@@ -594,7 +595,7 @@ tuning_table_lines(result) -> list[str]
 ### `ai.lstm` (LSTM NumPy pur)
 
 ```python
-torch_available() -> bool        # PyTorch installé ? (accélération facultative)
+torch_available() -> bool        # PyTorch installé ? (utilisé par le RIFE)
 
 class LSTMCell(n_in, n_hidden, rng=None):
     .forward(x_seq, h0=None) -> (h, cache)       # (T, n_in) → sorties (T, n_hidden)
@@ -626,8 +627,8 @@ trajectory_model_path(path=None) -> Path
 
 - Une seule **cellule LSTM 1 couche** (portes i/f/o/g concaténées, forward +
   backward avec backprop-through-time) implémentée à la main en **NumPy pur**
-  — aucune dépendance ; `torch_available()` signale l'accélération optionnelle
-  (`ai.backend="torch"`).
+  — aucune dépendance ; PyTorch (obligatoire depuis la v0.9.0) n'est utilisé
+  que par l'interpolation RIFE (`torch_available()`).
 - `LSTMTuner` s'entraîne sur l'historique de feedback de la base (une
   exécution = un pas de temps : notes par étoiles, 5 métriques, deltas) et
   **prédit le vecteur de deltas** du prochain réglage (les 5 paramètres

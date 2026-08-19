@@ -129,8 +129,12 @@ def process_image_pipeline(input_image):
 
 # Interface minimale avec Gradio
 with gr.Blocks(title="AstroFrame") as demo:
-    gr.Markdown("# AstroFrame — stabilisation géométrique et amélioration automatique d'astrophotographies et d'astrovidéos")
-    gr.Markdown("Stabilisation géométrique et amélioration automatique de photos et vidéos d'astres (Soleil, Lune, planètes).")
+    gr.Markdown(
+        "# AstroFrame — stabilisation géométrique et amélioration automatique d'astrophotographies et d'astrovidéos"
+    )
+    gr.Markdown(
+        "Stabilisation géométrique et amélioration automatique de photos et vidéos d'astres (Soleil, Lune, planètes)."
+    )
 
     with gr.Row():
         input_img = gr.Image(label="Photo/Frame originale")
@@ -205,7 +209,8 @@ exécutions. Points d'entrée : CLI `astroframe autotune` et onglet
 
 Une seule **cellule LSTM 1 couche** (portes i/f/o/g, forward + backward avec
 backprop-through-time) implémentée à la main en NumPy — sans dépendance ;
-PyTorch n'est qu'une accélération facultative (`torch_available()`). Deux
+PyTorch (obligatoire depuis la v0.9.0) est utilisé uniquement par le RIFE
+(`torch_available()`). Deux
 usages :
 
 - **`LSTMTuner`** — s'entraîne sur l'historique de feedback (une exécution =

@@ -110,9 +110,11 @@ def test_app_treinar_agora_usa_agente_fake(root, tmp_path, monkeypatch):
 
     monkeypatch.setattr(et, "train_enhancer_round", fake_train_round)
     app._train_now()
-    deadline = time.monotonic() + 60.0
-    while time.monotonic() < deadline and "Pronto" not in app.status.get():
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline and app.status.get() == "A treinar a CNN residual…":
         root.update()
+        if not app._train_results.empty():
+            app._poll_train()
         time.sleep(0.01)
     root.update()
     assert calls["n"] == 1
@@ -130,9 +132,11 @@ def test_app_treinar_agora_erro(root, tmp_path, monkeypatch):
 
     monkeypatch.setattr(et, "train_enhancer_round", failing)
     app._train_now()
-    deadline = time.monotonic() + 60.0
-    while time.monotonic() < deadline and "Pronto" not in app.status.get():
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline and app.status.get() == "A treinar a CNN residual…":
         root.update()
+        if not app._train_results.empty():
+            app._poll_train()
         time.sleep(0.01)
     root.update()
     assert "Erro no treino" in app.status.get()
@@ -165,6 +169,7 @@ def test_run_gui_inicia_janela(root, tmp_path, monkeypatch):
     assert et.run_gui(str(samples_dir), state_path=str(tmp_path / "s.json")) == 0
     assert created and len(created[0]) == 1
 
+
 def test_app_show_sem_imagem_precomputada(root, tmp_path):
     app = make_app(root, tmp_path)
     before = app.left.cget("image")
@@ -190,9 +195,11 @@ def test_app_treinar_resultado_skipped(root, tmp_path, monkeypatch):
 
     monkeypatch.setattr(et, "train_enhancer_round", fake_train_round)
     app._train_now()
-    deadline = time.monotonic() + 60.0
-    while time.monotonic() < deadline and "Pronto" not in app.status.get():
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline and app.status.get() == "A treinar a CNN residual…":
         root.update()
+        if not app._train_results.empty():
+            app._poll_train()
         time.sleep(0.01)
     root.update()
     assert "sem pares suficientes" in app.status.get()
@@ -232,9 +239,11 @@ def test_app_treinar_agora_atualiza_campeao(root, tmp_path, monkeypatch):
 
     monkeypatch.setattr(et, "train_enhancer_round", fake_train_round)
     app._train_now()
-    deadline = time.monotonic() + 60.0
-    while time.monotonic() < deadline and "Pronto" not in app.status.get():
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline and app.status.get() == "A treinar a CNN residual…":
         root.update()
+        if not app._train_results.empty():
+            app._poll_train()
         time.sleep(0.01)
     root.update()
     assert app._champion_path == str(tmp_path / "campeao.npz")

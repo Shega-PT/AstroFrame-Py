@@ -61,10 +61,19 @@ def test_smallcnn_load_versao_desconhecida(tmp_path):
     model = SmallCNN(mode="residual")
     path = model.save(tmp_path / "m.npz")
     data = np.load(path)
-    np.savez(path, schema_version=99, mode="residual", k=8, n_in=1,
-             conv1_w=data["conv1_w"], conv1_b=data["conv1_b"],
-             conv2_w=data["conv2_w"], conv2_b=data["conv2_b"],
-             conv3_w=data["conv3_w"], conv3_b=data["conv3_b"])
+    np.savez(
+        path,
+        schema_version=99,
+        mode="residual",
+        k=8,
+        n_in=1,
+        conv1_w=data["conv1_w"],
+        conv1_b=data["conv1_b"],
+        conv2_w=data["conv2_w"],
+        conv2_b=data["conv2_b"],
+        conv3_w=data["conv3_w"],
+        conv3_b=data["conv3_b"],
+    )
     assert SmallCNN.load(path) is None
 
 
@@ -135,8 +144,7 @@ def test_lstm_cell_load_versao_desconhecida(tmp_path):
     cell = LSTMCell(2, 4)
     path = cell.save(tmp_path / "c.npz")
     data = np.load(path)
-    np.savez(path, schema_version=99, n_in=2, n_hidden=4,
-             W=data["W"], U=data["U"], b=data["b"])
+    np.savez(path, schema_version=99, n_in=2, n_hidden=4, W=data["W"], U=data["U"], b=data["b"])
     assert LSTMCell.load(path) is None
 
 
@@ -161,8 +169,16 @@ def test_lstm_tuner_load_versao_desconhecida_e_corrompido(tmp_path):
     tuner = LSTMTuner(n_hidden=8)
     path = tuner.save(tmp_path / "t.npz")
     data = np.load(path)
-    np.savez(path, schema_version=99, n_hidden=8, W=data["W"], U=data["U"],
-             b=data["b"], head=data["head"], head_bias=data["head_bias"])
+    np.savez(
+        path,
+        schema_version=99,
+        n_hidden=8,
+        W=data["W"],
+        U=data["U"],
+        b=data["b"],
+        head=data["head"],
+        head_bias=data["head_bias"],
+    )
     assert LSTMTuner.load(path) is None
     bad = tmp_path / "bad.npz"
     bad.write_bytes(b"lixo")
@@ -306,6 +322,7 @@ def test_stabilizer_trajetoria_empurra_centroide_suavizado():
     eng = AntiJitterStabilizer(config=cfg)
     eng.stabilize(_disk_frame())
     assert len(eng._trajectory) == 1
+
 
 # -------------------------------------------------- early-stop e variantes --
 

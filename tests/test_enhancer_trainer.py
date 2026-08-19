@@ -217,9 +217,7 @@ def test_train_enhancer_round_warm_start_do_campeao(tmp_path):
     state = make_state(tmp_path)
     pairs = make_pairs(6, seed=13)
     first = et.train_enhancer_round(pairs, state, 1, epochs=3, db=db, seed=12)
-    second = et.train_enhancer_round(
-        pairs, state, 2, epochs=3, db=db, seed=12, champion_path=first["staged"]
-    )
+    second = et.train_enhancer_round(pairs, state, 2, epochs=3, db=db, seed=12, champion_path=first["staged"])
     assert second["skipped"] is False
     assert second["mean_delta"] >= 0.0
 
@@ -229,9 +227,7 @@ def test_train_enhancer_round_warm_start_do_campeao(tmp_path):
 
 def test_run_auto_headless_promove_e_exporta(tmp_path):
     root = make_samples_dir(tmp_path)
-    assert et.run_auto_headless(
-        str(root), series=2, epochs=2, export_path=str(tmp_path / "modelo.npz")
-    ) == 0
+    assert et.run_auto_headless(str(root), series=2, epochs=2, export_path=str(tmp_path / "modelo.npz")) == 0
     assert (tmp_path / "modelo.npz").exists()
     assert et.ENHANCER_CANONICAL_PATH.exists()
     state = et.EnhancerState(train_dir() / et.DEFAULT_STATE_NAME)
@@ -333,6 +329,7 @@ def test_sample_stars_diferente_do_limiar():
     config = AstroFrameConfig()
     stars = et.sample_stars(frame, CIRCLE, config, with_cnn=True)
     assert 0.0 <= stars <= 5.0
+
 
 def test_detection_sem_guia_devolve_none():
     store = CalibrationStore("/tmp/inexistente/calibration.json")

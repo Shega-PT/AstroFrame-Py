@@ -5,6 +5,40 @@ All notable changes to AstroFrame will be documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and versioning [SemVer](https://semver.org/).
 
+## [0.9.0] - 2026-08-19
+
+### Added
+
+- **RIFE interpolation wired into the CLI** — `astroframe video --interp N`
+  generates N intermediate frames per frame pair (RIFE via `torch.hub`,
+  loaded lazily) and exports the video `(N+1)×` smoother (`fps × (N+1)`);
+  if the model fails to load, the CLI warns and continues without
+  interpolation.
+- **PyTorch and Pillow become mandatory dependencies** — the optional
+  `astroframe[rife]` extra is removed; `torch>=2.0` and `Pillow>=10.0` are
+  now in `pyproject.toml` and `requirements.txt`.
+
+### Fixed
+
+- **GitHub Actions failures** — Tk tests now run under `xvfb-run -a`;
+  `ruff==0.16.2` pinned (the `ruff format --check` failed due to version
+  drift); `actions/checkout@v7` and `actions/setup-python@v7` (Node 24,
+  removes the Node 20 deprecation warning); the test job installs the CPU
+  wheel of PyTorch before the package.
+- **Flaky Tk tests under load** — `ImageTk.PhotoImage` objects are now
+  created with an explicit `master` (image always in the same Tcl
+  interpreter as the canvas) and the trainer tests drain the results queue
+  directly instead of relying on `after` timers (2 clean full runs).
+- **No-torch tests** — the RIFE wrapper tests simulate the absence of torch
+  via `__import__` (still valid with torch installed).
+
+### Removed
+
+- Phantom `ai.backend` field (there was no `torch` implementation of the
+  core — `LSTMCellTorch`/`SmallCNNTorch` never existed); the documentation
+  (READMEs, PT/EN/FR docs, `torch_available()`) now describes PyTorch as a
+  mandatory dependency used only by RIFE.
+
 ## [0.8.0] - 2026-08-18
 
 ### Added

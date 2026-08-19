@@ -24,7 +24,8 @@ Geometric stabilization and automatic enhancement of astrophotographs and astrov
 > **AI at a glance (v0.7.0)** — the entire AI layer is **off by default**
 > (`[tuning]` and `[ai]`) and degrades silently: the auto-tuning needs a
 > folder of samples with ground truth, and the LSTM/CNN models (pure NumPy
-> core, PyTorch optional) live in `Logs/weights/*.npz` — when a model is
+> core; PyTorch, mandatory since v0.9.0, powers only the RIFE interpolation)
+> live in `Logs/weights/*.npz` — when a model is
 > missing or corrupt, the pipeline simply runs without it.
 
 ## Installation
@@ -36,6 +37,12 @@ pip install -e ".[dev]"
 ```
 
 Simple alternative: `pip install -r requirements.txt`. Requires Python 3.10+.
+
+> [!NOTE]
+> PyTorch is mandatory since v0.9.0 (RIFE interpolation). On Linux, PyPI
+> installs the CUDA build by default (~2.5 GB); for the CPU-only build run
+> `pip install torch --index-url https://download.pytorch.org/whl/cpu`
+> before installing the package (this is what the CI uses).
 
 > [!IMPORTANT]
 > On recent Debian/Ubuntu, `pip install` on the system Python fails with
@@ -92,7 +99,7 @@ detection with the ground truth on all samples.
 
 - The exported video **does not contain audio** (`cv2.VideoWriter`); to preserve the sound, merge the original track with ffmpeg:
   `ffmpeg -i original.mp4 -i processed.mp4 -c copy -map 0:a -map 1:v output.mp4`
-- RIFE interpolation is optional and requires PyTorch (`pip install -e ".[rife]"`); the model interface varies between versions of the RIFE repositories.
+- PyTorch is mandatory since v0.9.0 and powers **RIFE interpolation** (`astroframe video --interp N` — smooths the video with N AI-generated intermediate frames between each pair of frames); if the model fails to load, the CLI warns and continues without interpolation. The model interface varies between versions of the RIFE repositories.
 - The denoising is the slowest step (~1 s/frame at 480p); use `--fast` on large videos.
 
 ## Development
@@ -115,7 +122,7 @@ src/astroframe/
 ├── meta/         metadata reading (ffprobe/OpenCV/EXIF) and parameter suggestions
 ├── calibration/  example scanning, ground truth and detection validation
 ├── ui/           Gradio interface (Image/Video/Auto-tune + Calibration) and CLI
-└── ai/           auto-tuning, LSTM/CNN learning, feedback, rating and optional RIFE
+└── ai/           auto-tuning, LSTM/CNN learning, feedback, rating and RIFE (PyTorch)
 ```
 
 ## License
