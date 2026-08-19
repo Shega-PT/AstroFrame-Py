@@ -12,12 +12,11 @@ venv/
 htmlcov/
 Logs/**
 !Logs/.gitkeep
-!Logs/logs/
-!Logs/logs/ia/
-!Logs/logs/system/
-!Logs/train/
-!Logs/weights/
-!Logs/**/.gitkeep
+Logs/logs/
+Logs/logs/ia/
+Logs/logs/system/
+Logs/train/
+Logs/weights/
 SDV_0233.MP4
 samples/calibration.json
 samples/validator_state.json
