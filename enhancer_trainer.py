@@ -40,7 +40,7 @@ from astroframe.calibration.scan import load_frame, scan_samples
 from astroframe.calibration.store import CalibrationStore
 from astroframe.config import AstroFrameConfig
 from astroframe.core.enhancer import enhance_image
-from astroframe.core.stabilizer import DiskDetection, find_all_disks, find_disks_for_calibration
+from astroframe.core.stabilizer import DiskDetection, find_disks_for_calibration
 from astroframe.paths import (
     calibration_json,
     logs_ia_dir,
@@ -438,7 +438,10 @@ def run_auto_headless(
     store = CalibrationStore(calibration_json(samples_dir))
     db = FeedbackDB()
 
-    print(f"AstroFrame — treino automático da CNN de edição ({len(samples)} amostras, {series} série(s))", flush=True)
+    print(
+        f"AstroFrame — treino automático da CNN de edição ({len(samples)} amostras, {series} série(s))",
+        flush=True,
+    )
     all_pairs: list[tuple[np.ndarray, np.ndarray]] = []
     champion_path: str | Path | None = None
     final_metrics: dict | None = None
@@ -624,9 +627,7 @@ class EnhancerTkApp:
 
             from PIL import Image, ImageTk
         except ImportError as exc:  # pragma: no cover
-            raise RuntimeError(
-                "Interface manual indisponível: tkinter/PIL em falta. Usa --check."
-            ) from exc
+            raise RuntimeError("Interface manual indisponível: tkinter/PIL em falta. Usa --check.") from exc
         self.tk = tk
         self.Image = Image
         self.ImageTk = ImageTk
@@ -673,8 +674,13 @@ class EnhancerTkApp:
         tk.Label(stars_row, text="Avaliação manual:", font=("", 9)).pack(side=tk.LEFT)
         self.stars_var = tk.DoubleVar(value=3.0)
         self.stars_scale = tk.Scale(
-            stars_row, from_=0.0, to=5.0, resolution=0.1, orient=tk.HORIZONTAL,
-            variable=self.stars_var, length=200,
+            stars_row,
+            from_=0.0,
+            to=5.0,
+            resolution=0.1,
+            orient=tk.HORIZONTAL,
+            variable=self.stars_var,
+            length=200,
         )
         self.stars_scale.pack(side=tk.LEFT, padx=(8, 0))
         self.stars_auto_label = tk.StringVar(value="")

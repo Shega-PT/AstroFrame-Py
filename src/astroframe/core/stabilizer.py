@@ -207,9 +207,7 @@ def find_all_disks(image: np.ndarray, config: AstroFrameConfig | None = None) ->
     return unique
 
 
-def _dedup_disks(
-    candidates: list[DiskDetection], max_disks: int
-) -> list[DiskDetection]:
+def _dedup_disks(candidates: list[DiskDetection], max_disks: int) -> list[DiskDetection]:
     """Dedup ordenada por raio decrescente: funde o mesmo bordo e descarta
     envelopes concêntricos, respeitando o limite `max_disks`."""
     unique: list[DiskDetection] = []
@@ -431,7 +429,14 @@ def center_and_stabilize(
     dx = width // 2 - detection.cx
     dy = height // 2 - detection.cy
 
-    stabilized, scale = _translate(image, dx, dy, detection.radius, config.stabilizer, (detection.cx, detection.cy))
+    stabilized, scale = _translate(
+        image,
+        dx,
+        dy,
+        detection.radius,
+        config.stabilizer,
+        (detection.cx, detection.cy),
+    )
     radius = int(detection.radius * scale)
     return stabilized, DiskDetection(detection.cx, detection.cy, radius)
 
@@ -510,11 +515,7 @@ class AntiJitterStabilizer:
 
         # Sem deteção no frame, o centro do recorte é o centro suavizado
         # (última posição conhecida / previsão LSTM).
-        center = (
-            (detection.cx, detection.cy)
-            if detection is not None
-            else (self._smooth[0], self._smooth[1])
-        )
+        center = (detection.cx, detection.cy) if detection is not None else (self._smooth[0], self._smooth[1])
         stabilized, scale = _translate(frame, dx, dy, radius, self.config.stabilizer, center)
         if detection is not None:
             detection = DiskDetection(detection.cx, detection.cy, int(detection.radius * scale))

@@ -44,7 +44,6 @@ from astroframe.core.polish import polish_image
 from astroframe.core.stabilizer import (
     AntiJitterStabilizer,
     DiskDetection,
-    find_all_disks,
     find_disks_for_calibration,
 )
 from astroframe.meta.extractor import MediaMetadata, extract_metadata
@@ -499,15 +498,24 @@ def build_app(config: AstroFrameConfig | None = None) -> gr.Blocks:
                             "Os pesos são aprendidos pelo sistema a cada utilização.</small>"
                         )
                         clip_limit = gr.Slider(
-                            0.5, 6.0, value=config.clahe.clip_limit, step=0.1,
+                            0.5,
+                            6.0,
+                            value=config.clahe.clip_limit,
+                            step=0.1,
                             label="CLAHE clip limit — contraste adaptativo",
                         )
                         denoise_h = gr.Slider(
-                            1.0, 20.0, value=config.denoise.h, step=1.0,
+                            1.0,
+                            20.0,
+                            value=config.denoise.h,
+                            step=1.0,
                             label="Denoising (h) — força do filtragem bilateral",
                         )
                         sharp_amount = gr.Slider(
-                            0.0, 2.0, value=config.unsharp.amount, step=0.1,
+                            0.0,
+                            2.0,
+                            value=config.unsharp.amount,
+                            step=0.1,
                             label="Nitidez (unsharp mask) — realce de bordas",
                         )
                     with gr.Accordion("Polimento (fundo + coroa)", open=False):
@@ -516,13 +524,14 @@ def build_app(config: AstroFrameConfig | None = None) -> gr.Blocks:
                             "preservação da coroa e gestão de reflexos da lente.</small>"
                         )
                         corona_scale = gr.Slider(
-                            1.0, 3.0, value=config.polish.corona_scale, step=0.1,
+                            1.0,
+                            3.0,
+                            value=config.polish.corona_scale,
+                            step=0.1,
                             label="Coroa mantida (× raio) — zona preservada além do limbo",
                         )
                     with gr.Accordion("Deteção + visualização", open=False):
-                        gr.Markdown(
-                            "<small>⚙️ Parâmetros de deteção geométrica e visualização.</small>"
-                        )
+                        gr.Markdown("<small>⚙️ Parâmetros de deteção geométrica e visualização.</small>")
                         zoom = gr.Slider(1.0, 4.0, value=1.0, step=0.5, label="Zoom na coroa/borda")
                         show_disk = gr.Checkbox(True, label="Mostrar disco detetado")
 
@@ -574,25 +583,40 @@ def build_app(config: AstroFrameConfig | None = None) -> gr.Blocks:
                             )
                             with gr.Accordion("Melhoria", open=True):
                                 v_clip_limit = gr.Slider(
-                                    0.5, 6.0, value=config.clahe.clip_limit, step=0.1,
+                                    0.5,
+                                    6.0,
+                                    value=config.clahe.clip_limit,
+                                    step=0.1,
                                     label="CLAHE clip limit",
                                 )
                                 v_denoise_h = gr.Slider(
-                                    1.0, 20.0, value=config.denoise.h, step=1.0,
+                                    1.0,
+                                    20.0,
+                                    value=config.denoise.h,
+                                    step=1.0,
                                     label="Denoising (h)",
                                 )
                                 v_sharp_amount = gr.Slider(
-                                    0.0, 2.0, value=config.unsharp.amount, step=0.1,
+                                    0.0,
+                                    2.0,
+                                    value=config.unsharp.amount,
+                                    step=0.1,
                                     label="Nitidez (unsharp)",
                                 )
                             with gr.Accordion("Polimento", open=False):
                                 v_corona_scale = gr.Slider(
-                                    1.0, 3.0, value=config.polish.corona_scale, step=0.1,
+                                    1.0,
+                                    3.0,
+                                    value=config.polish.corona_scale,
+                                    step=0.1,
                                     label="Coroa mantida (× raio)",
                                 )
                             with gr.Accordion("Deteção + visualização", open=False):
                                 v_show_disk = gr.Checkbox(True, label="Mostrar discos detetados ao vivo")
-                                v_export = gr.Checkbox(False, label="Exportar vídeo processado (.mp4, sem áudio)")
+                                v_export = gr.Checkbox(
+                                    False,
+                                    label="Exportar vídeo processado (.mp4, sem áudio)",
+                                )
                         with gr.Row():
                             v_rating_label = gr.HTML(label="Avaliação automática")
                             v_stars_manual = gr.Slider(

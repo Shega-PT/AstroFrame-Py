@@ -68,12 +68,12 @@ from astroframe.ai import params as pparams
 from astroframe.ai.cnn import DiskFilter, SmallCNN, disk_patch, fit_classifier
 from astroframe.ai.feedback import FeedbackDB
 from astroframe.ai.score import score_image, stars_text
-from astroframe.core.enhancer import enhance_image
 from astroframe.calibration.scan import SampleRef, load_frame, scan_samples
 from astroframe.calibration.store import CalibrationStore
 from astroframe.calibration.validate import CalibrationReport, shape_iou, validate_all, validate_item
 from astroframe.config import AstroFrameConfig
-from astroframe.core.stabilizer import DiskDetection, find_all_disks, find_disks_for_calibration
+from astroframe.core.enhancer import enhance_image
+from astroframe.core.stabilizer import DiskDetection, find_disks_for_calibration
 from astroframe.paths import (
     calibration_json,
     logs_ia_dir,
@@ -1184,7 +1184,12 @@ class ValidatorTkApp:
         ttk.Separator(panel).grid(row=row, column=0, columnspan=2, sticky="ew", pady=4)
         row += 1
         self.stars_label_var = tk.StringVar(value="")
-        self.stars_label = ttk.Label(panel, textvariable=self.stars_label_var, font=("", 10, "bold"), foreground="#c90")
+        self.stars_label = ttk.Label(
+            panel,
+            textvariable=self.stars_label_var,
+            font=("", 10, "bold"),
+            foreground="#c90",
+        )
         self.stars_label.grid(row=row, column=0, columnspan=2, sticky="w")
         row += 1
         ttk.Label(panel, text="Avaliação manual (arrasta):", foreground="#555").grid(
@@ -1192,12 +1197,22 @@ class ValidatorTkApp:
         )
         self.stars_var = tk.DoubleVar(value=3.0)
         self.stars_scale = ttk.Scale(
-            panel, from_=0.0, to=5.0, variable=self.stars_var, orient=tk.HORIZONTAL, command=self._on_stars_change
+            panel,
+            from_=0.0,
+            to=5.0,
+            variable=self.stars_var,
+            orient=tk.HORIZONTAL,
+            command=self._on_stars_change,
         )
         self.stars_scale.grid(row=row, column=1, sticky="ew")
         row += 1
         self.stars_detail_var = tk.StringVar(value="")
-        self.stars_detail = ttk.Label(panel, textvariable=self.stars_detail_var, foreground="#666", wraplength=300)
+        self.stars_detail = ttk.Label(
+            panel,
+            textvariable=self.stars_detail_var,
+            foreground="#666",
+            wraplength=300,
+        )
         self.stars_detail.grid(row=row, column=0, columnspan=2, sticky="w", pady=(2, 0))
         row += 1
 
@@ -1526,8 +1541,10 @@ class ValidatorTkApp:
         if self.frame is None:
             return 0.0
         enhanced = enhance_image(self.frame, self.session.detect_config())
-        detection = self.session.current if self.session.pending else (
-            self.session.accepted[0] if self.session.accepted else None
+        detection = (
+            self.session.current
+            if self.session.pending
+            else (self.session.accepted[0] if self.session.accepted else None)
         )
         return float(score_image(enhanced, detection, self.session.config).stars)
 

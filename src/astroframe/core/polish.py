@@ -33,7 +33,7 @@ import cv2
 import numpy as np
 
 from astroframe.config import AstroFrameConfig
-from astroframe.core.stabilizer import DiskDetection, GHOST_RADIUS_RATIO, find_all_disks
+from astroframe.core.stabilizer import GHOST_RADIUS_RATIO, DiskDetection, find_all_disks
 
 logger = logging.getLogger(__name__)
 
@@ -182,14 +182,11 @@ def polish_image(
     # 3) processo individual + máscaras (bandas com diluição até ao recorte).
     #    O recorte máximo é a banda do astro maior (a "linha de recorte" do
     #    utilizador); nenhuma máscara passa dela.
-    primary_band = _band_mask((height, width), cx, cy, radius, radius * cfg.corona_scale, cfg.feather)
     # Limite do recorte do astro maior, SEM feather: a banda de outro corpo
     # é limitada por este recorte, mas só na forma dura — usar a banda suave
     # (borrada pelo feather) atenuaria o corpo inteiro junto ao bordo do recorte.
     ys, xs = np.ogrid[:height, :width]
-    primary_crop = (
-        (np.hypot(xs - cx, ys - cy) <= radius * cfg.corona_scale).astype(np.float32)
-    )
+    primary_crop = (np.hypot(xs - cx, ys - cy) <= radius * cfg.corona_scale).astype(np.float32)
     masks: list[np.ndarray] = []
     boosted: list[np.ndarray] = []
     for astro in astros:

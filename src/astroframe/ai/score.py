@@ -24,7 +24,7 @@ import cv2
 import numpy as np
 
 from astroframe.config import AstroFrameConfig
-from astroframe.core.stabilizer import DiskDetection, GHOST_RADIUS_RATIO, find_all_disks
+from astroframe.core.stabilizer import GHOST_RADIUS_RATIO, DiskDetection, find_all_disks
 
 _STAR_TEXT = {
     5: "Excelente",

@@ -49,7 +49,7 @@ from astroframe.calibration.scan import SampleRef, load_frame, scan_samples
 from astroframe.calibration.store import CalibrationItem, CalibrationStore
 from astroframe.calibration.validate import suggest_parameters, validate_all
 from astroframe.config import AstroFrameConfig
-from astroframe.core.stabilizer import DiskDetection, find_all_disks, find_disks_for_calibration
+from astroframe.core.stabilizer import DiskDetection, find_disks_for_calibration
 from astroframe.paths import calibration_json
 
 logger = logging.getLogger(__name__)
