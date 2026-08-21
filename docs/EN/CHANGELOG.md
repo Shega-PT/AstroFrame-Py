@@ -5,6 +5,55 @@ All notable changes to AstroFrame will be documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and versioning [SemVer](https://semver.org/).
 
+## [0.10.0] - 2026-08-21
+
+### Added
+
+- **Always-on Controller** (`src/astroframe/ai/controller.py`) — daemon thread
+  that periodically applies learned deltas (via FeedbackDB) to the active
+  config: uses `LSTMTuner` when the model is trained, otherwise falls back to
+  `FallbackNet` (rule-based reward/punishment by stars). `apply_now()` applies
+  immediately at startup; `start()`/`stop()` for the polling thread.
+- **Star ratings in the validator** — each sample receives automatic stars
+  (0–5, via `score_image` on the enhanced image) and a manual rating slider
+  (0.0–5.0); both are stored in the sample record (`stars_auto`,
+  `stars_user`).
+- **Star ratings in the CNN trainer** — manual slider (0.0–5.0) alongside the
+  Valid/Rejected judgment; status shows auto-stars (without CNN → with CNN) and
+  manual stars.
+- **Reorganized parameter accordion** — the Gradio Image tab groups sliders
+  into 3 sub-accordions (Enhancement, Polish, Detection) with informational
+  text; the Video tab follows the same structure.
+
+### Removed
+
+- **Headless auto-training** — the `--auto`, `--series`, `--epochs`,
+  `--cnn-off`, `--cnn-threshold` and `--export` arguments were removed from
+  the `validator.py` and `enhancer_trainer.py` CLIs; the `run_auto_headless`
+  functions remain declared for programmatic use and tests, but are no longer
+  accessible via command line. CNN training (detection and enhancement) is done
+  exclusively through the manual interface (ValidatorTkApp / EnhancerTkApp).
+
+### Fixed
+
+- **Pytest abort in trainer tests** — the `accept_pair` helper now waits for
+  the next sample load before allowing `_train_out`; prevents the load thread
+  from outliving the test and corrupting the GC.
+- **E2E stabilization test** — `_auto_crop` now centers the crop on the disk
+  (new `center` parameter) instead of the frame, eliminating the ±1 px
+  per-frame drift that broke the e2e stabilization test.
+- **Pre-existing tests** — `test_find_all_disks_circulos_concentricos` and 3
+  polish tests adapted to new behavior (removal of `_is_occluded_artifact`;
+  hard `primary_crop` instead of feathered band).
+
+### Tests
+
+- **686 tests, 100% coverage** — new suite `tests/test_controller.py` (14
+  tests), extensions to `tests/test_cnn.py` (pipeline integration),
+  `tests/test_stabilizer.py` (disk_filter) and `tests/test_enhancer.py`
+  (cnn_enhance); all CLI `--auto` tests adapted to verify rejection
+  (SystemExit).
+
 ## [0.9.1] - 2026-08-19
 
 ### Added

@@ -115,7 +115,7 @@ def test_int_params_coerentes_com_as_specs():
         assert pparams.PARAM_SPECS[path].dtype is int
 
 
-def test_specs_detect_tem_exatamente_os_sete_treinaveis():
+def test_specs_detect_tem_exatamente_os_cinco_treinaveis():
     detect = pparams.specs("detect")
     assert {spec.name for spec in detect} == set(PUNISH_DELTAS)
-    assert len(detect) == 7
+    assert len(detect) == 5

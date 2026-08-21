@@ -3,11 +3,10 @@
 Depois da melhoria (CLAHE + denoise + nitidez), o polimento:
 
 - **deteta todos os astros** (`find_all_disks`) — o astro maior e os
-  discos secundários (ex.: a Lua diante do Sol, satélites diante de planetas),
-  cada um com a sua deteção própria;
+  outros corpos, cada um com a sua deteção própria;
 - **processa cada astro individualmente** — realce local (esticamento de
   contraste) e brilho extra, calculados com as estatísticas do próprio astro
-  (uma silhueta uniforme, como a Lua diante do Sol, é preservada intacta);
+  (um astro escuro e uniforme é preservado intacto);
 - **recorta um pouco além do astro maior** (`corona_scale` × raio) — o anel
   entre o bordo do astro e a linha de recorte é **diluído** até ao fundo;
 - **remonta sem costuras** — as máscaras individuais (com feather) são
@@ -15,8 +14,9 @@ Depois da melhoria (CLAHE + denoise + nitidez), o polimento:
   tocam ou sobrepõem, o resultado é a média suave dos dois realces;
 - **fundo = média do fundo original** (`background_fill`, em vez de preto) ou
   preto puro (`black_background`);
-- **remove reflexos da lente** — círculos-ghost com o centro fora do astro
-  maior são eliminados (a área é preenchida com o fundo);
+- **remove reflexos da lente** — círculos-ghost pequenos (raio inferior a
+  `GHOST_RADIUS_RATIO` × o do astro maior) com o centro fora do astro são
+  eliminados (a área é preenchida com o fundo);
 - círculos demasiado pequenos (`reflection_min_radius`) são ignorados (são
   estrelas/ruído, não astros).
 
@@ -33,7 +33,7 @@ import cv2
 import numpy as np
 
 from astroframe.config import AstroFrameConfig
-from astroframe.core.stabilizer import DiskDetection, find_all_disks
+from astroframe.core.stabilizer import DiskDetection, GHOST_RADIUS_RATIO, find_all_disks
 
 logger = logging.getLogger(__name__)
 
@@ -87,8 +87,8 @@ def _background_color(image: np.ndarray, cx: int, cy: int, radius: float, cfg) -
 def _astro_boost(image: np.ndarray, gray: np.ndarray, disk: DiskDetection, cfg) -> np.ndarray:
     """Realce individual de um astro (esticamento local de contraste + brilho).
 
-    Silhuetas escuras e uniformes (ex.: a Lua diante do Sol) são devolvidas
-    intactas — esticar ou levantar o brilho destruiria o contraste do astro.
+    Astros escuros e uniformes são devolvidos intactos — esticar ou levantar
+    o brilho destruiria o contraste do astro.
     """
     height, width = image.shape[:2]
     ys, xs = np.ogrid[:height, :width]
@@ -157,20 +157,19 @@ def polish_image(
     radius = float(detection.radius)
     gray = image if image.ndim == 2 else cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
-    # 1) separar astros de reflexos: discos secundários têm o centro
-    #    dentro do astro maior; ghosts (reflexos) ficam fora.
+    # 1) separar astros de reflexos: ghosts (reflexos da lente) são círculos
+    #    pequenos com o centro fora do astro maior; os restantes são corpos
+    #    celestes reais e são polidos individualmente.
     disks = find_all_disks(image, config)
     astros: list[DiskDetection] = []
     for disk in disks:
         if disk.radius < cfg.reflection_min_radius:
             continue
         inside_primary = math.hypot(disk.cx - cx, disk.cy - cy) < radius
-        if not inside_primary:
+        if not inside_primary and disk.radius < GHOST_RADIUS_RATIO * radius:
             if cfg.remove_reflections:
                 continue
-            astros.append(disk)
-        else:
-            astros.append(disk)
+        astros.append(disk)
 
     # 2) fundo: média do fundo original (ou preto puro).
     if cfg.black_background:
@@ -184,15 +183,27 @@ def polish_image(
     #    O recorte máximo é a banda do astro maior (a "linha de recorte" do
     #    utilizador); nenhuma máscara passa dela.
     primary_band = _band_mask((height, width), cx, cy, radius, radius * cfg.corona_scale, cfg.feather)
+    # Limite do recorte do astro maior, SEM feather: a banda de outro corpo
+    # é limitada por este recorte, mas só na forma dura — usar a banda suave
+    # (borrada pelo feather) atenuaria o corpo inteiro junto ao bordo do recorte.
+    ys, xs = np.ogrid[:height, :width]
+    primary_crop = (
+        (np.hypot(xs - cx, ys - cy) <= radius * cfg.corona_scale).astype(np.float32)
+    )
     masks: list[np.ndarray] = []
     boosted: list[np.ndarray] = []
     for astro in astros:
         r_out = astro.radius * cfg.corona_scale
         band = _band_mask((height, width), astro.cx, astro.cy, astro.radius, r_out, cfg.feather)
-        masks.append(np.minimum(band, primary_band))
+        # A banda de um corpo que se sobrepõe ao recorte do astro maior é
+        # limitada por esse recorte; um corpo real fora do recorte (planeta,
+        # estrela) mantém a própria banda — senão a máscara anulava-se ali.
+        if math.hypot(astro.cx - cx, astro.cy - cy) < radius * cfg.corona_scale:
+            band = np.minimum(band, primary_crop)
+        masks.append(band)
         boosted.append(_astro_boost(image, gray, astro, cfg))
 
-    # o astro maior não invade o interior dos discos secundários (cada um manda
+    # o astro maior não invade o interior dos outros astros (cada um manda
     # na sua área; as sobreposições são suavizadas pelo blend ponderado)
     if len(masks) > 1:
         primary_mask = masks[0].copy()

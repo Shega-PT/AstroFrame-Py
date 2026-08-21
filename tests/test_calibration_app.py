@@ -54,8 +54,8 @@ def test_load_item_payload_sem_chave(tmp_path):
 def test_load_item_payload_deteccao_automatica(tmp_path, monkeypatch):
     root = _make_sample_dir(tmp_path)
     monkeypatch.setattr(
-        "astroframe.ui.calibration_app.find_all_disks",
-        lambda frame, config=None: [DiskDetection(60, 50, 30)],
+        "astroframe.ui.calibration_app.find_disks_for_calibration",
+        lambda frame, config=None, expected_n=None: [DiskDetection(60, 50, 30)],
     )
     value, info = load_item_payload(_sample_key(root), str(root))
     assert len(value["layers"]) == 1
@@ -71,8 +71,8 @@ def test_load_item_payload_usa_ground_truth_guardado(tmp_path, monkeypatch):
     )
     calls = {"n": 0}
     monkeypatch.setattr(
-        "astroframe.ui.calibration_app.find_all_disks",
-        lambda frame, config=None: calls.__setitem__("n", calls["n"] + 1) or [],
+        "astroframe.ui.calibration_app.find_disks_for_calibration",
+        lambda frame, config=None, expected_n=None: calls.__setitem__("n", calls["n"] + 1) or [],
     )
     value, info = load_item_payload(_sample_key(root), str(root), store=store)
     assert calls["n"] == 0
@@ -88,8 +88,8 @@ def test_load_item_payload_amostra_desconhecida(tmp_path):
 def test_auto_detect_payload(tmp_path, monkeypatch):
     root = _make_sample_dir(tmp_path)
     monkeypatch.setattr(
-        "astroframe.ui.calibration_app.find_all_disks",
-        lambda frame, config=None: [DiskDetection(60, 50, 30), DiskDetection(10, 10, 5)],
+        "astroframe.ui.calibration_app.find_disks_for_calibration",
+        lambda frame, config=None, expected_n=None: [DiskDetection(60, 50, 30), DiskDetection(10, 10, 5)],
     )
     value, info = auto_detect_payload(_sample_key(root), str(root))
     assert len(value["layers"]) == 2
@@ -127,7 +127,7 @@ def test_save_item_circles_erros(tmp_path):
 
 def test_validate_all_report_sem_ground_truth(tmp_path, monkeypatch):
     root = _make_sample_dir(tmp_path)
-    monkeypatch.setattr("astroframe.ui.calibration_app.find_all_disks", lambda frame, config=None: [])
+    monkeypatch.setattr("astroframe.ui.calibration_app.find_disks_for_calibration", lambda frame, config=None, expected_n=None: [])
     rows, summary, suggestions = validate_all_report(str(root))
     assert rows[0][3] == "—"
     assert "Sem ground truth para validar" in summary
@@ -142,8 +142,8 @@ def test_validate_all_report_com_ground_truth(tmp_path, monkeypatch):
         CalibrationItem("images/eclipse.jpg", "image", None, 120, 100, [DiskDetection(60, 50, 30)]),
     )
     monkeypatch.setattr(
-        "astroframe.ui.calibration_app.find_all_disks",
-        lambda frame, config=None: [DiskDetection(61, 50, 29)],
+        "astroframe.ui.calibration_app.find_disks_for_calibration",
+        lambda frame, config=None, expected_n=None: [DiskDetection(61, 50, 29)],
     )
     rows, summary, suggestions = validate_all_report(str(root), store=store)
     assert len(rows) == 1

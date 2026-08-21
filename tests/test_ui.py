@@ -16,7 +16,6 @@ from astroframe.ui.gradio_app import (
     _draw_disks,
     _from_pipeline,
     _preview_every,
-    _split_disks,
     _summary_html,
     _to_pipeline,
     _zoom_crop,
@@ -111,51 +110,26 @@ def test_draw_detection_fora_dos_limites_devolve_copia():
     np.testing.assert_array_equal(_draw_detection(frame, DiskDetection(1000, 25, 8)), frame)
 
 
-def test_draw_disks_desenha_reflexos_a_vermelho():
+def test_draw_disks_desenha_todos_os_discos_a_verde():
     frame = np.zeros((50, 60, 3), dtype=np.uint8)
-    marked = _draw_disks(frame, DiskDetection(30, 25, 8), [DiskDetection(10, 10, 4)])
-    assert (marked[..., 2] > 200).any()
+    marked = _draw_disks(frame, [DiskDetection(30, 25, 8), DiskDetection(10, 10, 4)])
     assert (marked[..., 1] > 200).any()
+    assert not (marked[..., 2] > 200).any()  # tudo verde, sem vermelho
 
 
 def test_draw_disks_ignora_discos_fora_dos_limites():
     frame = np.zeros((50, 60, 3), dtype=np.uint8)
-    marked = _draw_disks(frame, DiskDetection(30, 25, 8), [DiskDetection(-5, 10, 4)])
+    baseline = _draw_disks(frame, [DiskDetection(30, 25, 8)])
+    marked = _draw_disks(frame, [DiskDetection(30, 25, 8), DiskDetection(-5, 10, 4)])
+    np.testing.assert_array_equal(marked, baseline)  # o disco fora dos limites não desenha nada
+    assert (marked[..., 1] > 200).any()  # o disco dentro dos limites continua a ser desenhado
     assert not (marked[..., 2] > 200).any()
 
 
-def test_split_disks_separa_companheiro_de_reflexo():
-    primary = DiskDetection(30, 25, 10)
-    companion = DiskDetection(32, 27, 5)
-    ghost = DiskDetection(50, 45, 6)
-    companions, reflections = _split_disks([primary, companion, ghost], primary)
-    assert companions == [companion]
-    assert reflections == [ghost]
-    companions, reflections = _split_disks([companion, ghost], None)
-    assert companions == []
-    assert len(reflections) == 2
-
-
-def test_draw_disks_desenha_companheiro_a_amarelo():
+def test_draw_disks_sem_discos_devolve_copia():
     frame = np.zeros((50, 60, 3), dtype=np.uint8)
-    marked = _draw_disks(
-        frame,
-        DiskDetection(30, 25, 10),
-        reflections=[DiskDetection(50, 45, 6)],
-        companions=[DiskDetection(32, 27, 5)],
-    )
-    assert (marked[..., 2] > 200).any()
-    assert (marked[..., 1] > 200).any()
-    red_only = (marked[..., 2] > 200) & (marked[..., 1] <= 200)
-    yellow = (marked[..., 1] > 200) & (marked[..., 2] > 200)
-    assert red_only.any() and yellow.any()
-
-
-def test_draw_disks_ignora_companheiro_fora_dos_limites():
-    frame = np.zeros((50, 60, 3), dtype=np.uint8)
-    marked = _draw_disks(frame, DiskDetection(30, 25, 10), companions=[DiskDetection(-5, 27, 5)])
-    yellow = (marked[..., 1] > 200) & (marked[..., 2] > 200)
-    assert not yellow.any()
+    marked = _draw_disks(frame, [])
+    np.testing.assert_array_equal(marked, frame)
 
 
 def test_preview_every():

@@ -269,8 +269,8 @@ def test_toggle_ratio():
 def test_load_item_view_devolve_preview_e_dropdown(tmp_path, monkeypatch):
     root = _make_sample_dir(tmp_path)
     monkeypatch.setattr(
-        "astroframe.ui.calibration_app.find_all_disks",
-        lambda frame, config=None: [DiskDetection(60, 50, 30)],
+        "astroframe.ui.calibration_app.find_disks_for_calibration",
+        lambda frame, config=None, expected_n=None: [DiskDetection(60, 50, 30)],
     )
     value, info, preview, update, center, click_text = load_item_view(_sample_key(root), str(root))
     assert preview is not None
@@ -283,8 +283,8 @@ def test_load_item_view_devolve_preview_e_dropdown(tmp_path, monkeypatch):
 def test_auto_detect_view_sincroniza_dropdown(tmp_path, monkeypatch):
     root = _make_sample_dir(tmp_path)
     monkeypatch.setattr(
-        "astroframe.ui.calibration_app.find_all_disks",
-        lambda frame, config=None: [DiskDetection(60, 50, 30)],
+        "astroframe.ui.calibration_app.find_disks_for_calibration",
+        lambda frame, config=None, expected_n=None: [DiskDetection(60, 50, 30)],
     )
     value, info, update = auto_detect_view(_sample_key(root), str(root))
     assert len(value["layers"]) == 1
@@ -295,12 +295,12 @@ def test_auto_detect_with_params_aplica_sliders(tmp_path, monkeypatch):
     root = _make_sample_dir(tmp_path)
     seen = {}
 
-    def fake_detect(frame, config=None):
+    def fake_detect(frame, config=None, expected_n=None):
         seen["param2"] = config.stabilizer.param2
         seen["max_radius"] = config.stabilizer.max_radius
         return [DiskDetection(60, 50, 30)]
 
-    monkeypatch.setattr("astroframe.ui.calibration_app.find_all_disks", fake_detect)
+    monkeypatch.setattr("astroframe.ui.calibration_app.find_disks_for_calibration", fake_detect)
     value, info, config = auto_detect_with_params(
         _sample_key(root), str(root), None, param2=75, max_radius=500
     )
@@ -320,8 +320,8 @@ def test_fluxo_completo_editor(tmp_path, monkeypatch):
     """Adicionar → mover → redimensionar → eliminar num editor real."""
     root = _make_sample_dir(tmp_path)
     monkeypatch.setattr(
-        "astroframe.ui.calibration_app.find_all_disks",
-        lambda frame, config=None: [DiskDetection(60, 50, 30)],
+        "astroframe.ui.calibration_app.find_disks_for_calibration",
+        lambda frame, config=None, expected_n=None: [DiskDetection(60, 50, 30)],
     )
     value, _, _, _, _, _ = load_item_view(_sample_key(root), str(root))
     value, _, _ = add_shape_layer(value, "Elipse", 60, 0.5, (20, 20))

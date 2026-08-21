@@ -43,8 +43,6 @@ Uso:
     python validator.py --config config.yaml
     python validator.py --reset-state       # apaga progresso, deltas e séries
     python validator.py --check             # relatório sem interface
-    python validator.py --auto --series 3   # treino automático sem interface
-    python validator.py --export treinado.json
 """
 
 from __future__ import annotations
@@ -69,11 +67,13 @@ import numpy as np
 from astroframe.ai import params as pparams
 from astroframe.ai.cnn import DiskFilter, SmallCNN, disk_patch, fit_classifier
 from astroframe.ai.feedback import FeedbackDB
+from astroframe.ai.score import score_image, stars_text
+from astroframe.core.enhancer import enhance_image
 from astroframe.calibration.scan import SampleRef, load_frame, scan_samples
 from astroframe.calibration.store import CalibrationStore
 from astroframe.calibration.validate import CalibrationReport, shape_iou, validate_all, validate_item
 from astroframe.config import AstroFrameConfig
-from astroframe.core.stabilizer import DiskDetection, find_all_disks
+from astroframe.core.stabilizer import DiskDetection, find_all_disks, find_disks_for_calibration
 from astroframe.paths import (
     calibration_json,
     logs_ia_dir,
@@ -462,7 +462,7 @@ class ValidatorState:
 def apply_state_weights(state: ValidatorState) -> None:
     """Aplica os pesos/IoU guardados no estado às tabelas de treino.
 
-    Chamado no arranque (janela, `--check` e `--auto`): os valores
+    Chamado no arranque (janela e `--check`): os valores
     gravados com 'Salvar' no relatório final substituem os pesos por
     omissão até nova edição.
     """
@@ -876,7 +876,7 @@ class AutoTrainer:
                     if 0 <= circle.cx < w and 0 <= circle.cy < h and circle.radius > 0:
                         self.positives.append(disk_patch(frame, circle.cx, circle.cy, circle.radius))
                 self._random_negatives(frame, gt, sample.label)
-            detected = find_all_disks(frame, session.detect_config())
+            detected = find_disks_for_calibration(frame, session.detect_config(), expected_n=len(gt))
             if self._filter is not None:
                 detected = self._filter.filter_disks(detected, frame, self.cnn_threshold)
             if on_detect is not None:
@@ -899,7 +899,7 @@ class AutoTrainer:
                     if action == "present":
                         continue
                 if action == "redetect":
-                    detected = find_all_disks(frame, session.detect_config())
+                    detected = find_disks_for_calibration(frame, session.detect_config(), expected_n=len(gt))
                     if self._filter is not None:
                         detected = self._filter.filter_disks(detected, frame, self.cnn_threshold)
                     if on_detect is not None:
@@ -1181,6 +1181,26 @@ class ValidatorTkApp:
         self.params_label.grid(row=row, column=0, columnspan=2, sticky="w", pady=(2, 0))
         row += 1
 
+        ttk.Separator(panel).grid(row=row, column=0, columnspan=2, sticky="ew", pady=4)
+        row += 1
+        self.stars_label_var = tk.StringVar(value="")
+        self.stars_label = ttk.Label(panel, textvariable=self.stars_label_var, font=("", 10, "bold"), foreground="#c90")
+        self.stars_label.grid(row=row, column=0, columnspan=2, sticky="w")
+        row += 1
+        ttk.Label(panel, text="Avaliação manual (arrasta):", foreground="#555").grid(
+            row=row, column=0, sticky="w"
+        )
+        self.stars_var = tk.DoubleVar(value=3.0)
+        self.stars_scale = ttk.Scale(
+            panel, from_=0.0, to=5.0, variable=self.stars_var, orient=tk.HORIZONTAL, command=self._on_stars_change
+        )
+        self.stars_scale.grid(row=row, column=1, sticky="ew")
+        row += 1
+        self.stars_detail_var = tk.StringVar(value="")
+        self.stars_detail = ttk.Label(panel, textvariable=self.stars_detail_var, foreground="#666", wraplength=300)
+        self.stars_detail.grid(row=row, column=0, columnspan=2, sticky="w", pady=(2, 0))
+        row += 1
+
         ttk.Button(panel, text="Recomeçar amostra", command=self.restart_sample).grid(
             row=row, column=0, columnspan=2, sticky="ew", pady=(6, 0)
         )
@@ -1261,6 +1281,9 @@ class ValidatorTkApp:
         self._busy = False
         self._pending_shown = []
         self._report("")
+        self.stars_var.set(3.0)
+        self.stars_label_var.set("")
+        self.stars_detail_var.set(stars_text(3.0))
         try:
             frame = load_frame(sample)
         except Exception as exc:
@@ -1293,12 +1316,13 @@ class ValidatorTkApp:
         job_id = self._job_id
         frame = self.frame.copy() if self.frame is not None else None
         detect_config = self.session.detect_config()
+        expected_n = len(self.session.ground_truth)
         messages = self._queue
 
         def work() -> None:
             try:
                 assert frame is not None
-                detected = find_all_disks(frame, detect_config)
+                detected = find_disks_for_calibration(frame, detect_config, expected_n=expected_n)
                 messages.put(("detect", job_id, detected, None))
             except Exception as exc:  # pragma: no cover
                 messages.put(("detect", job_id, None, exc))
@@ -1387,6 +1411,7 @@ class ValidatorTkApp:
     def _finalize_sample(self) -> None:
         self._pending_shown = []
         self._set_buttons_enabled(False)
+        self._apply_stars_to_sample()
         self.session.complete()
         done = self.state.done_count(self.samples)
         total = len(self.samples)
@@ -1489,6 +1514,32 @@ class ValidatorTkApp:
         record["done"] = False
         self.state.save()
         self.load_sample(self.session.current_index)
+
+    # ----------------------------------------------------------------- estrelas --
+
+    def _on_stars_change(self, _value: str) -> None:
+        stars = self.stars_var.get()
+        self.stars_detail_var.set(stars_text(stars))
+
+    def _compute_auto_stars(self) -> float:
+        """Estrelas automáticas da imagem atual (0–5)."""
+        if self.frame is None:
+            return 0.0
+        enhanced = enhance_image(self.frame, self.session.detect_config())
+        detection = self.session.current if self.session.pending else (
+            self.session.accepted[0] if self.session.accepted else None
+        )
+        return float(score_image(enhanced, detection, self.session.config).stars)
+
+    def _apply_stars_to_sample(self) -> None:
+        """Grava as estrelas (auto ou manual) no registo da amostra."""
+        auto_stars = self._compute_auto_stars()
+        manual_stars = self.stars_var.get()
+        record = self.state.record(self.session.sample.key)
+        record["stars_auto"] = round(auto_stars, 1)
+        record["stars_user"] = round(manual_stars, 1)
+        self.state.save()
+        self.stars_label_var.set(f"{auto_stars:.1f}★ auto · {manual_stars:.1f}★ manual")
 
     # ------------------------------------------------------------- desenho --
 
@@ -1673,8 +1724,6 @@ _PARAM_TOOLTIPS = {
     "gaussian_kernel_size": "Tamanho do kernel do desfoque gaussiano aplicado "
     "antes do Hough (ímpar forçado).",
     "gaussian_sigma": "Sigma do desfoque: sobe com o ruído da imagem.",
-    "occluded_ratio": "Fração do disco coberta por outro que anula o disco oculto (artefacto).",
-    "occluded_ring": "Largura do anel escuro exigido para o disco interior (ex.: a Lua diante do Sol).",
 }
 
 
@@ -2371,14 +2420,14 @@ def run_check(
     rows: list[tuple[str, list[DiskDetection], list[DiskDetection]]] = []
     errors: list[str] = []
     for sample in samples:
+        item = store.get_item(sample.key)
+        gt = list(item.circles) if item is not None else []
         try:
             frame = load_frame(sample)
-            detected = find_all_disks(frame, config)
+            detected = find_disks_for_calibration(frame, config, expected_n=len(gt))
         except Exception as exc:
             errors.append(f"{sample.label}: erro ({exc})")
             continue
-        item = store.get_item(sample.key)
-        gt = list(item.circles) if item is not None else []
         rows.append((sample.label, gt, detected))
 
     report = validate_all(rows)
@@ -2411,12 +2460,14 @@ def run_auto_headless(
     cnn: bool = True,
     cnn_threshold: float = CNN_THRESHOLD_DEFAULT,
 ) -> int:
-    """`--auto`: N séries de treino automático sem interface, com exportação final.
+    """Treino headless mantido declarado (sem entrada na CLI desde a remoção
+    do auto-treino): N séries de treino automático, com exportação final.
 
-    Entre séries, os patches recolhidos re-treiam a CNN de deteção
-    (warm-start do campeão); o candidato é comparado com o melhor registado
-    no banco e só é promovido se for estritamente melhor. Sem `iou` explícito
-    usa o valor guardado no estado (pesos 'Salvar').
+    Pode ser chamado programaticamente pelos testes; a interface usa o
+    julgamento manual. Entre séries, os patches recolhidos re-treiam a CNN de
+    deteção (warm-start do campeão); o candidato é comparado com o melhor
+    registado no banco e só é promovido se for estritamente melhor. Sem `iou`
+    explícito usa o valor guardado no estado (pesos 'Salvar').
     """
     config = AstroFrameConfig.from_yaml(config_path) if config_path else AstroFrameConfig()
     state = ValidatorState(state_path or train_dir() / DEFAULT_STATE_NAME)
@@ -2539,52 +2590,6 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Modo sem interface: deteta todas as amostras e imprime o relatório",
     )
-    parser.add_argument(
-        "--auto",
-        action="store_true",
-        help="Treino automático sem interface (compara com a calibração e valida/rejeita sozinho)",
-    )
-    parser.add_argument(
-        "--series",
-        type=int,
-        default=3,
-        help="(auto) número de séries de treino (omissão: 3)",
-    )
-    parser.add_argument(
-        "--iou",
-        type=float,
-        default=None,
-        help=(
-            f"(auto) IoU mínimo exigido com o guia manual, entre {AUTO_IOU_MIN:.2f} e "
-            f"{AUTO_IOU_MAX:.2f} (omissão: o guardado no estado, ou {AUTO_IOU_MIN:.2f}); "
-            "quanto maior, maior a dificuldade"
-        ),
-    )
-    parser.add_argument(
-        "--epochs",
-        type=int,
-        default=60,
-        help="(auto) épocas de treino da CNN de deteção entre séries (omissão: 60)",
-    )
-    parser.add_argument(
-        "--cnn-off",
-        action="store_true",
-        help="(auto) desliga a CNN de deteção: só Hough + julgamento IoU, sem patches",
-    )
-    parser.add_argument(
-        "--cnn-threshold",
-        type=float,
-        default=CNN_THRESHOLD_DEFAULT,
-        help=f"(auto) confiança mínima da CNN para manter um candidato (omissão: {CNN_THRESHOLD_DEFAULT})",
-    )
-    parser.add_argument(
-        "--export",
-        default=None,
-        help=(
-            f"Ficheiro JSON com a configuração treinada para o sistema real "
-            f"(omissão: Logs/train/{DEFAULT_EXPORT_NAME})"
-        ),
-    )
     return parser
 
 
@@ -2599,18 +2604,6 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.check:
             return run_check(args.samples, args.config, state_path)
-        if args.auto:
-            return run_auto_headless(
-                args.samples,
-                args.config,
-                state_path,
-                args.series,
-                args.export,
-                args.iou,
-                args.epochs,
-                not args.cnn_off,
-                args.cnn_threshold,
-            )
         run(samples_dir=args.samples, config_path=args.config, state_path=state_path)
     except Exception:
         logging.exception("Falha ao arrancar a validação")

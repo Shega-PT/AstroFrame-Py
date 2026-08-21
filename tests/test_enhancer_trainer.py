@@ -311,17 +311,23 @@ def test_main_check_retorna_0(tmp_path):
     assert et.main(["--samples", str(root), "--check"]) == 0
 
 
-def test_main_auto_retorna_0(tmp_path):
+def test_main_auto_removido(tmp_path):
     root = make_samples_dir(tmp_path, 1)
-    assert et.main(["--samples", str(root), "--auto", "--series", "1", "--epochs", "2"]) == 0
+    # O treino automático headless foi removido — `--auto` deixa de existir.
+    import pytest as _pytest
+
+    with _pytest.raises(SystemExit):
+        et.main(["--samples", str(root), "--auto", "--series", "1", "--epochs", "2"])
 
 
 def test_build_parser_tem_fluxos():
     parser = et.build_parser()
-    args = parser.parse_args(["--auto", "--series", "5", "--epochs", "9", "--seed", "3"])
-    assert args.auto and args.series == 5 and args.epochs == 9 and args.seed == 3
-    args2 = parser.parse_args(["--check"])
-    assert args2.check is True
+    args = parser.parse_args(["--check"])
+    assert args.check is True
+    assert not hasattr(args, "auto")
+    assert not hasattr(args, "series")
+    assert not hasattr(args, "epochs")
+    assert not hasattr(args, "export")
 
 
 def test_sample_stars_diferente_do_limiar():

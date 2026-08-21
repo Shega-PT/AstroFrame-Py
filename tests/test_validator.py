@@ -26,6 +26,7 @@ from validator import (
     auto_iou_threshold,
     best_gt_iou,
     build_global_report,
+    build_parser,
     circle_from_dict,
     circle_to_dict,
     classifier_accuracy,
@@ -80,13 +81,13 @@ def test_nudge_punish_aumenta_os_deltas():
     assert deltas["param2"] == PUNISH_DELTAS["param2"]
     assert deltas["param1"] == PUNISH_DELTAS["param1"]
     assert deltas["dp"] == PUNISH_DELTAS["dp"]
-    assert deltas["occluded_ratio"] == PUNISH_DELTAS["occluded_ratio"]
+    assert deltas["gaussian_sigma"] == PUNISH_DELTAS["gaussian_sigma"]
 
 
 def test_nudge_reward_reduz_os_deltas():
     deltas = nudge_deltas({}, "accept")
     assert deltas["param2"] == REWARD_DELTAS["param2"]
-    assert deltas["occluded_ring"] == REWARD_DELTAS["occluded_ring"]
+    assert deltas["gaussian_kernel_size"] == REWARD_DELTAS["gaussian_kernel_size"]
 
 
 def test_nudge_nao_muda_os_deltas_dos_outros():
@@ -114,9 +115,9 @@ def test_effective_params_aplica_deltas():
 
 def test_effective_params_clampa_negativos():
     config = AstroFrameConfig()
-    params = effective_params(config, {"param2": -100.0, "occluded_ring": -10.0})
+    params = effective_params(config, {"param2": -100.0, "gaussian_sigma": -10.0})
     assert params["param2"] == DELTA_BOUNDS["param2"][0]
-    assert params["occluded_ring"] == DELTA_BOUNDS["occluded_ring"][0]
+    assert params["gaussian_sigma"] == DELTA_BOUNDS["gaussian_sigma"][0]
 
 
 def test_effective_params_kernel_impar_e_por_tipo():
@@ -367,7 +368,7 @@ def test_estado_rounds_begin_end_clear(tmp_path):
     assert state.round == 1
     state.rewards += 3
     state.punishments += 2
-    state.deltas = {"param2": 4.0, "occluded_ratio": 0.02}
+    state.deltas = {"param2": 4.0, "gaussian_sigma": 3.5}
     state.end_round(metrics_from_report(validate_all([("a", [CIRCLE], [CIRCLE])])))
     record = state.rounds[-1]
     assert record["rewards"] == 3
@@ -397,7 +398,7 @@ def test_rounds_text_só_mostra_séries_fechadas(tmp_path):
 
 def test_export_trained(tmp_path):
     state = ValidatorState(tmp_path / "state.json")
-    state.deltas = {"param2": 3.0, "occluded_ratio": 0.02}
+    state.deltas = {"param2": 3.0, "gaussian_sigma": 3.0}
     state.rewards = 5
     state.punishments = 2
     state.round = 2
@@ -409,7 +410,7 @@ def test_export_trained(tmp_path):
     assert data["stats"]["rewards"] == 5
     assert data["deltas"]["param2"] == 3.0
     assert data["stabilizer"]["param2"] == config.stabilizer.param2 + 3
-    assert data["stabilizer"]["occluded_ratio"] == pytest.approx(config.stabilizer.occluded_ratio + 0.02)
+    assert data["stabilizer"]["gaussian_sigma"] == pytest.approx(config.stabilizer.gaussian_sigma + 3.0)
     assert "min_radius" not in data["stabilizer"]
     assert "min_dist" not in data["stabilizer"]
     assert data["stabilizer"]["max_radius"] == config.stabilizer.max_radius
@@ -438,11 +439,11 @@ def test_auto_trainer_aceita_matches_e_rejeita_ghosts(tmp_path, monkeypatch):
     ghost = DiskDetection(300, 300, 40)
     calls = {"n": 0}
 
-    def fake_detect(_frame, _config):
+    def fake_detect(_frame, _config, expected_n=None):
         calls["n"] += 1
         return [CIRCLE] if calls["n"] > 1 else [CIRCLE, ghost]
 
-    monkeypatch.setattr("validator.find_all_disks", fake_detect)
+    monkeypatch.setattr("validator.find_disks_for_calibration", fake_detect)
     trainer, state = make_auto_trainer(tmp_path, [CIRCLE], monkeypatch)
     report = trainer.run_series()
     assert report.samples_done == 1
@@ -453,7 +454,7 @@ def test_auto_trainer_aceita_matches_e_rejeita_ghosts(tmp_path, monkeypatch):
 
 
 def test_auto_trainer_sem_guia_completa_sem_julgamentos(tmp_path, monkeypatch):
-    monkeypatch.setattr("validator.find_all_disks", lambda _f, _c: [CIRCLE])
+    monkeypatch.setattr("validator.find_disks_for_calibration", lambda _f, _c, expected_n=None: [CIRCLE])
     trainer, state = make_auto_trainer(tmp_path, [], monkeypatch)
     report = trainer.run_series()
     assert report.rewards == 0
@@ -462,7 +463,7 @@ def test_auto_trainer_sem_guia_completa_sem_julgamentos(tmp_path, monkeypatch):
 
 
 def test_auto_trainer_respeita_dever_parar(tmp_path, monkeypatch):
-    monkeypatch.setattr("validator.find_all_disks", lambda _f, _c: [CIRCLE])
+    monkeypatch.setattr("validator.find_disks_for_calibration", lambda _f, _c, expected_n=None: [CIRCLE])
     trainer, _state = make_auto_trainer(tmp_path, [CIRCLE], monkeypatch)
     report = trainer.run_series(should_stop=lambda: True)
     assert report.stopped
@@ -473,7 +474,7 @@ def test_auto_trainer_margem_mais_exigente_com_mais_validaçoes(tmp_path, monkey
     near_miss = DiskDetection(104, 100, 50)  # IoU ≈ 0.90 com o guia
     assert best_gt_iou(near_miss, [CIRCLE]) >= AUTO_IOU_START
     assert best_gt_iou(near_miss, [CIRCLE]) < AUTO_IOU_END
-    monkeypatch.setattr("validator.find_all_disks", lambda _f, _c: [near_miss])
+    monkeypatch.setattr("validator.find_disks_for_calibration", lambda _f, _c, expected_n=None: [near_miss])
 
     trainer, state = make_auto_trainer(tmp_path, [CIRCLE], monkeypatch)
     report = trainer.run_series()
@@ -490,7 +491,7 @@ def test_auto_trainer_margem_mais_exigente_com_mais_validaçoes(tmp_path, monkey
 
 def test_auto_trainer_abaixo_de_090_nunca_aceita(tmp_path, monkeypatch):
     below = DiskDetection(110, 100, 50)  # IoU ≈ 0.77 < mínimo 0.90
-    monkeypatch.setattr("validator.find_all_disks", lambda _f, _c: [below])
+    monkeypatch.setattr("validator.find_disks_for_calibration", lambda _f, _c, expected_n=None: [below])
 
     trainer, state = make_auto_trainer(tmp_path, [CIRCLE], monkeypatch)
     report = trainer.run_series()
@@ -575,7 +576,7 @@ def test_auto_trainer_progress_sem_guia_chama_progress(tmp_path, monkeypatch):
 
 def test_auto_trainer_on_detect_apos_deteçao_e_reavaliaçao(tmp_path, monkeypatch):
     ghost = DiskDetection(180, 100, 50)  # longe do guia → rejeitado sempre
-    monkeypatch.setattr("validator.find_all_disks", lambda _f, _c: [ghost])
+    monkeypatch.setattr("validator.find_disks_for_calibration", lambda _f, _c, expected_n=None: [ghost])
     trainer, _state = make_auto_trainer(tmp_path, [CIRCLE], monkeypatch)
     on_detect_calls = []
     report = trainer.run_series(on_detect=lambda *a: on_detect_calls.append(a))
@@ -669,7 +670,7 @@ def test_estado_reset_limpa_campos_cnn(tmp_path):
 
 
 def test_auto_trainer_recolhe_patches_positivos_e_negativos(tmp_path, monkeypatch):
-    monkeypatch.setattr("validator.find_all_disks", lambda _f, _c: [CIRCLE])
+    monkeypatch.setattr("validator.find_disks_for_calibration", lambda _f, _c, expected_n=None: [CIRCLE])
     store = CalibrationStore(tmp_path / "calibration.json")
     store.items["a.jpg"] = CalibrationItem("a.jpg", "image", None, 640, 480, [CIRCLE])
     config = AstroFrameConfig()
@@ -687,7 +688,7 @@ def test_auto_trainer_recolhe_patches_positivos_e_negativos(tmp_path, monkeypatc
 
 
 def test_auto_trainer_sem_recolha_de_patches(tmp_path, monkeypatch):
-    monkeypatch.setattr("validator.find_all_disks", lambda _f, _c: [CIRCLE])
+    monkeypatch.setattr("validator.find_disks_for_calibration", lambda _f, _c, expected_n=None: [CIRCLE])
     store = CalibrationStore(tmp_path / "calibration.json")
     store.items["a.jpg"] = CalibrationItem("a.jpg", "image", None, 640, 480, [CIRCLE])
     config = AstroFrameConfig()
@@ -704,7 +705,7 @@ def test_auto_trainer_filtra_com_cnn_sem_esvaziar(tmp_path, monkeypatch):
     model, _ = fit_classifier(make_patch_pairs()[0], make_patch_pairs()[1], epochs=2, seed=4)
     model_path = tmp_path / "filter.npz"
     model.save(model_path)
-    monkeypatch.setattr("validator.find_all_disks", lambda _f, _c: [CIRCLE])
+    monkeypatch.setattr("validator.find_disks_for_calibration", lambda _f, _c, expected_n=None: [CIRCLE])
     store = CalibrationStore(tmp_path / "calibration.json")
     store.items["a.jpg"] = CalibrationItem("a.jpg", "image", None, 640, 480, [CIRCLE])
     config = AstroFrameConfig()
@@ -718,7 +719,7 @@ def test_auto_trainer_filtra_com_cnn_sem_esvaziar(tmp_path, monkeypatch):
 
 
 def test_auto_trainer_cnn_model_path_inexistente(tmp_path, monkeypatch):
-    monkeypatch.setattr("validator.find_all_disks", lambda _f, _c: [CIRCLE])
+    monkeypatch.setattr("validator.find_disks_for_calibration", lambda _f, _c, expected_n=None: [CIRCLE])
     trainer, state = make_auto_trainer(tmp_path, [CIRCLE], monkeypatch)
     trainer2 = AutoTrainer(
         trainer.samples,
@@ -809,24 +810,14 @@ def test_run_auto_headless_sem_amostras(tmp_path):
 
 def test_cli_auto_com_flags_cnn(tmp_path, capsys):
     root = make_samples_dir(tmp_path)
-    assert (
-        main(
-            [
-                "--samples",
-                str(root),
-                "--auto",
-                "--series",
-                "1",
-                "--epochs",
-                "2",
-                "--cnn-off",
-                "--cnn-threshold",
-                "0.4",
-            ]
-        )
-        == 0
-    )
-    assert "CNN desligada" in capsys.readouterr().out
+    # O treino automático headless foi removido: os argumentos `--auto` e
+    # afins já não existem e o parser rejeita-os.
+    import pytest as _pytest
+
+    with _pytest.raises(SystemExit):
+        main(["--samples", str(root), "--auto", "--series", "1"])
+    with _pytest.raises(SystemExit):
+        build_parser().parse_args(["--samples", str(root), "--auto"])
 
 
 def test_apply_state_weights_ignora_delta_desconhecido(tmp_path):
@@ -837,14 +828,14 @@ def test_apply_state_weights_ignora_delta_desconhecido(tmp_path):
 
 
 def test_random_negatives_frame_pequena_nao_recolhe(tmp_path, monkeypatch):
-    monkeypatch.setattr("validator.find_all_disks", lambda _f, _c: [])
+    monkeypatch.setattr("validator.find_disks_for_calibration", lambda _f, _c, expected_n=None: [])
     trainer, state = make_auto_trainer(tmp_path, [], monkeypatch)
     trainer._random_negatives(np.zeros((20, 20, 3), dtype=np.uint8), [], "mini")
     assert trainer.negatives == []
 
 
 def test_random_negatives_descarta_crops_que_tocam_o_guia(tmp_path, monkeypatch):
-    monkeypatch.setattr("validator.find_all_disks", lambda _f, _c: [])
+    monkeypatch.setattr("validator.find_disks_for_calibration", lambda _f, _c, expected_n=None: [])
     trainer, state = make_auto_trainer(tmp_path, [], monkeypatch)
     frame = np.zeros((96, 96, 3), dtype=np.uint8)
     gt = [DiskDetection(cx, cy, 8) for cy in range(8, 96, 9) for cx in range(8, 96, 9)]

@@ -20,7 +20,6 @@ estrelas), o que se ajustou para a próxima vez e porquê.
 from __future__ import annotations
 
 import logging
-import math
 from dataclasses import replace
 from pathlib import Path
 
@@ -42,7 +41,12 @@ from astroframe.config import AstroFrameConfig
 from astroframe.core.enhancer import enhance_image
 from astroframe.core.pipeline import process_image
 from astroframe.core.polish import polish_image
-from astroframe.core.stabilizer import AntiJitterStabilizer, DiskDetection, find_all_disks
+from astroframe.core.stabilizer import (
+    AntiJitterStabilizer,
+    DiskDetection,
+    find_all_disks,
+    find_disks_for_calibration,
+)
 from astroframe.meta.extractor import MediaMetadata, extract_metadata
 from astroframe.meta.suggest import suggest_config, summary_fields
 from astroframe.video.reader import FrameReader
@@ -82,53 +86,24 @@ def _radius_clamped(frame: np.ndarray, radius: int) -> int:
 
 def _draw_detection(frame: np.ndarray, detection: DiskDetection | None) -> np.ndarray:
     """Cópia do frame com o círculo (bounding box) do disco detetado."""
-    return _draw_disks(frame, detection)
+    if detection is None:
+        return frame.copy()
+    return _draw_disks(frame, [detection])
 
 
-def _split_disks(
-    disks: list[DiskDetection], primary: DiskDetection | None
-) -> tuple[list[DiskDetection], list[DiskDetection]]:
-    """Separa os discos em discos secundários e reflexos da lente.
+def _draw_disks(frame: np.ndarray, disks: list[DiskDetection]) -> np.ndarray:
+    """Cópia do frame com TODOS os discos detetados desenhados a verde.
 
-    Um disco secundário (ex.: a Lua diante do Sol) tem o centro **dentro** do
-    astro maior; um reflexo (ghost da lente) está afastado dele.
-    """
-    companions: list[DiskDetection] = []
-    reflections: list[DiskDetection] = []
-    if primary is None:
-        return companions, list(disks)
-    for disk in disks:
-        if disk is primary or (disk.cx == primary.cx and disk.cy == primary.cy):
-            continue
-        inside = math.hypot(disk.cx - primary.cx, disk.cy - primary.cy) < primary.radius
-        target = companions if inside else reflections
-        target.append(disk)
-    return companions, reflections
-
-
-def _draw_disks(
-    frame: np.ndarray,
-    primary: DiskDetection | None,
-    reflections: list[DiskDetection] | tuple[DiskDetection, ...] | None = None,
-    companions: list[DiskDetection] | tuple[DiskDetection, ...] | None = None,
-) -> np.ndarray:
-    """Cópia do frame com TODOS os discos: astro maior a verde, discos
-    secundários a amarelo e reflexos a vermelho.
-
-    `primary`/`reflections`/`companions` usam as coordenadas da própria `frame`.
+    Na astrofotografia cada disco é um corpo celeste real — não há distinção
+    principal/secundário/reflexo na vista ao vivo (os reflexos da lente são
+    tratados no polimento, não na deteção).
     """
     height, width = frame.shape[:2]
     marked = frame.copy()
-    if primary is not None and 0 <= primary.cx < width and 0 <= primary.cy < height:
-        cv2.circle(marked, (primary.cx, primary.cy), _radius_clamped(frame, primary.radius), (0, 255, 0), 2)
-    for disk in companions or ():
+    for disk in disks:
         if not (0 <= disk.cx < width and 0 <= disk.cy < height):
             continue
-        cv2.circle(marked, (disk.cx, disk.cy), _radius_clamped(frame, disk.radius), (0, 255, 255), 2)
-    for disk in reflections or ():
-        if not (0 <= disk.cx < width and 0 <= disk.cy < height):
-            continue
-        cv2.circle(marked, (disk.cx, disk.cy), _radius_clamped(frame, disk.radius), (0, 0, 255), 2)
+        cv2.circle(marked, (disk.cx, disk.cy), _radius_clamped(frame, disk.radius), (0, 255, 0), 2)
     return marked
 
 
@@ -288,10 +263,8 @@ def process_video(
             for frame in reader:
                 stabilized, detection = engine.stabilize(frame)
                 disks = engine.last_all_disks
-                primary = detection if detection is not None else engine.last_detection
-                companions, reflections = _split_disks(disks, primary)
-                live = _draw_disks(frame, primary, reflections, companions) if show_disk else frame.copy()
-                state = "sem disco detetado" if primary is None else "disco no centro"
+                live = _draw_disks(frame, disks) if show_disk else frame.copy()
+                state = "sem disco detetado" if detection is None else "disco no centro"
                 status = f"Frame {done + 1}/{total or '?'} · {state}"
                 if writer is not None and stabilized.shape[:2] == (height, width):
                     engine_radius = engine.last_detection.radius if engine.last_detection else 0
@@ -369,11 +342,16 @@ def process_image_input(
     config: AstroFrameConfig | None = None,
     progress=None,
     db: FeedbackDB | None = None,
+    expected_disks: int | None = None,
 ):
     """Processa uma imagem (separador Imagem) e avalia o resultado.
 
     Devolve (estabilizado, processado, zoom, avaliação_html, estado, log).
     Também regista a utilização no banco de aprendizagem (uma linha nova).
+
+    `expected_disks` (opcional) ativa a **deteção multidisco obrigatória**:
+    o número de discos calibrado manualmente na mesma imagem — a deteção
+    escala a sensibilidade até os encontrar.
     """
     if progress is None:
         progress = gr.Progress()
@@ -409,17 +387,13 @@ def process_image_input(
     if show_disk and result.detection is not None:
         primary = DiskDetection(width // 2, height // 2, result.detection.radius)
         dx, dy = width // 2 - result.detection.cx, height // 2 - result.detection.cy
-        companions, reflections = _split_disks(find_all_disks(bgr, cfg), result.detection)
-
-        def translate(disks_: list[DiskDetection]) -> list[DiskDetection]:
-            return [DiskDetection(d.cx + dx, d.cy + dy, d.radius) for d in disks_]
-
-        stabilized = _draw_disks(
-            stabilized,
-            primary,
-            translate(reflections),
-            translate(companions),
-        )
+        all_disks = find_disks_for_calibration(bgr, cfg, expected_n=expected_disks)
+        translated = [
+            DiskDetection(d.cx + dx, d.cy + dy, d.radius)
+            for d in all_disks
+            if not (d.cx == result.detection.cx and d.cy == result.detection.cy)
+        ]
+        stabilized = _draw_disks(stabilized, [primary, *translated])
 
     zoomed = _zoom_crop(result.enhanced, zoom)
     state = _run_state("image", profile, cfg, rating, source=f"{width}x{height}")
@@ -519,20 +493,38 @@ def build_app(config: AstroFrameConfig | None = None) -> gr.Blocks:
                     zoomed = gr.Image(label="Zoom na coroa/borda")
 
                 with gr.Accordion("Parâmetros", open=False):
-                    clip_limit = gr.Slider(
-                        0.5, 6.0, value=config.clahe.clip_limit, step=0.1, label="CLAHE clip limit"
-                    )
-                    denoise_h = gr.Slider(
-                        1.0, 20.0, value=config.denoise.h, step=1.0, label="Força do denoising"
-                    )
-                    sharp_amount = gr.Slider(
-                        0.0, 2.0, value=config.unsharp.amount, step=0.1, label="Nitidez (unsharp)"
-                    )
-                    zoom = gr.Slider(1.0, 4.0, value=1.0, step=0.5, label="Zoom na coroa/borda")
-                    corona_scale = gr.Slider(
-                        1.0, 3.0, value=config.polish.corona_scale, step=0.1, label="Coroa mantida (× raio)"
-                    )
-                    show_disk = gr.Checkbox(True, label="Mostrar disco detetado")
+                    with gr.Accordion("Melhoria (CLAHE + denoising + nitidez)", open=True):
+                        gr.Markdown(
+                            "<small>⚙️ Ajustes do pipeline de melhoria automática. "
+                            "Os pesos são aprendidos pelo sistema a cada utilização.</small>"
+                        )
+                        clip_limit = gr.Slider(
+                            0.5, 6.0, value=config.clahe.clip_limit, step=0.1,
+                            label="CLAHE clip limit — contraste adaptativo",
+                        )
+                        denoise_h = gr.Slider(
+                            1.0, 20.0, value=config.denoise.h, step=1.0,
+                            label="Denoising (h) — força do filtragem bilateral",
+                        )
+                        sharp_amount = gr.Slider(
+                            0.0, 2.0, value=config.unsharp.amount, step=0.1,
+                            label="Nitidez (unsharp mask) — realce de bordas",
+                        )
+                    with gr.Accordion("Polimento (fundo + coroa)", open=False):
+                        gr.Markdown(
+                            "<small>⚙️ Controlo do polimento final: remoção de fundo, "
+                            "preservação da coroa e gestão de reflexos da lente.</small>"
+                        )
+                        corona_scale = gr.Slider(
+                            1.0, 3.0, value=config.polish.corona_scale, step=0.1,
+                            label="Coroa mantida (× raio) — zona preservada além do limbo",
+                        )
+                    with gr.Accordion("Deteção + visualização", open=False):
+                        gr.Markdown(
+                            "<small>⚙️ Parâmetros de deteção geométrica e visualização.</small>"
+                        )
+                        zoom = gr.Slider(1.0, 4.0, value=1.0, step=0.5, label="Zoom na coroa/borda")
+                        show_disk = gr.Checkbox(True, label="Mostrar disco detetado")
 
                     with gr.Row():
                         rating_label = gr.HTML(label="Avaliação automática")
@@ -576,24 +568,31 @@ def build_app(config: AstroFrameConfig | None = None) -> gr.Blocks:
                             live = gr.Image(label="Ao vivo — frame original + discos detetados")
                             preview = gr.Image(label="Resultado final (frames espaçados)")
                         with gr.Accordion("Processamento", open=False):
-                            v_clip_limit = gr.Slider(
-                                0.5, 6.0, value=config.clahe.clip_limit, step=0.1, label="CLAHE clip limit"
+                            gr.Markdown(
+                                "<small>⚙️ Mesmos parâmetros da aba Imagem — valores "
+                                "sugestivos dos metadados do vídeo + aprendizagem anterior.</small>"
                             )
-                            v_denoise_h = gr.Slider(
-                                1.0, 20.0, value=config.denoise.h, step=1.0, label="Força do denoising"
-                            )
-                            v_sharp_amount = gr.Slider(
-                                0.0, 2.0, value=config.unsharp.amount, step=0.1, label="Nitidez (unsharp)"
-                            )
-                            v_corona_scale = gr.Slider(
-                                1.0,
-                                3.0,
-                                value=config.polish.corona_scale,
-                                step=0.1,
-                                label="Coroa mantida (× raio)",
-                            )
-                            v_show_disk = gr.Checkbox(True, label="Mostrar discos detetados ao vivo")
-                            v_export = gr.Checkbox(False, label="Exportar vídeo processado (.mp4, sem áudio)")
+                            with gr.Accordion("Melhoria", open=True):
+                                v_clip_limit = gr.Slider(
+                                    0.5, 6.0, value=config.clahe.clip_limit, step=0.1,
+                                    label="CLAHE clip limit",
+                                )
+                                v_denoise_h = gr.Slider(
+                                    1.0, 20.0, value=config.denoise.h, step=1.0,
+                                    label="Denoising (h)",
+                                )
+                                v_sharp_amount = gr.Slider(
+                                    0.0, 2.0, value=config.unsharp.amount, step=0.1,
+                                    label="Nitidez (unsharp)",
+                                )
+                            with gr.Accordion("Polimento", open=False):
+                                v_corona_scale = gr.Slider(
+                                    1.0, 3.0, value=config.polish.corona_scale, step=0.1,
+                                    label="Coroa mantida (× raio)",
+                                )
+                            with gr.Accordion("Deteção + visualização", open=False):
+                                v_show_disk = gr.Checkbox(True, label="Mostrar discos detetados ao vivo")
+                                v_export = gr.Checkbox(False, label="Exportar vídeo processado (.mp4, sem áudio)")
                         with gr.Row():
                             v_rating_label = gr.HTML(label="Avaliação automática")
                             v_stars_manual = gr.Slider(

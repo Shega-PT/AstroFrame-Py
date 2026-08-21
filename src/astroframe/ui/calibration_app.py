@@ -34,7 +34,7 @@ from astroframe.calibration.shapes import (
 from astroframe.calibration.store import CalibrationItem, CalibrationStore
 from astroframe.calibration.validate import suggest_parameters, validate_all
 from astroframe.config import AstroFrameConfig
-from astroframe.core.stabilizer import find_all_disks
+from astroframe.core.stabilizer import find_all_disks, find_disks_for_calibration
 from astroframe.paths import calibration_json
 from astroframe.ui.gradio_app import _from_pipeline
 
@@ -93,15 +93,23 @@ def auto_detect_payload(
     key: str | None,
     samples_dir: str,
     config: AstroFrameConfig | None = None,
+    store: CalibrationStore | None = None,
 ) -> tuple[dict, str]:
-    """Re-corre a deteção automática no item e devolve os círculos para edição."""
+    """Re-corre a deteção automática no item e devolve os círculos para edição.
+
+    Com círculos guardados no `store`, a deteção é multidisco obrigatória
+    (escada de sensibilidade até à contagem calibrada).
+    """
     config = config or AstroFrameConfig()
     if not key:
         return {}, "Escolhe uma amostra na lista."
     samples = scan_samples(_samples_dir_to_root(samples_dir))
     sample = _find_sample(samples, key)
     frame = load_frame(sample)
-    circles = find_all_disks(frame, config)
+    store = store or CalibrationStore(_calibration_path(samples_dir))
+    item = store.get_item(key)
+    expected_n = len(item.circles) if item is not None else 0
+    circles = find_disks_for_calibration(frame, config, expected_n=expected_n)
     info = (
         f"<b>{sample.label}</b> · {len(circles)} círculo(s) detetado(s) — "
         "ajusta à mão e carrega em 'Guardar ajustes'."
@@ -344,7 +352,8 @@ def validate_all_report(
     graded: list[tuple[str, list, list]] = []
     for sample in samples:
         stored = store.get_item(sample.key)
-        detected = find_all_disks(load_frame(sample), config)
+        expected_n = len(stored.circles) if stored is not None else 0
+        detected = find_disks_for_calibration(load_frame(sample), config, expected_n=expected_n)
         if stored is None or not stored.circles:
             rows.append([sample.label, 0, len(detected), "—", "sem ground truth", ""])
             continue

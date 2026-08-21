@@ -62,3 +62,25 @@ def test_enhance_image_pode_omitir_denoise():
     out = enhance_image(image, AstroFrameConfig(), use_denoise=False)
     assert out.shape == image.shape
     assert out.dtype == np.uint8
+
+
+def test_enhance_image_com_cnn_enhance_aplica_residual(monkeypatch):
+    from astroframe.ai.cnn import ResidualEnhancer, fit_residual, SmallCNN
+
+    image, _, _ = make_disk_image(add_noise=True)
+    rng = np.random.default_rng(0)
+    clean = image[:, :, 0].astype(np.float64) / 255.0
+    noisy = np.clip(clean + rng.normal(0, 0.05, clean.shape), 0, 1)
+    pairs = [
+        (np.clip(noisy * 255, 0, 255).astype(np.uint8), (clean * 255).astype(np.uint8))
+        for _ in range(6)
+    ]
+    model, _ = fit_residual(pairs, model=SmallCNN(mode="residual", k=2, seed=0), epochs=2, seed=0)
+    enhancer = ResidualEnhancer(model=model)
+    monkeypatch.setattr("astroframe.core.enhancer._cnn_enhancer", enhancer)
+
+    config = AstroFrameConfig()
+    config.ai.cnn_enhance = True
+    out = enhance_image(image, config)
+    assert out.dtype == np.uint8
+    assert out.shape == image.shape

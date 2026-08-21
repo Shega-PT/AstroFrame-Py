@@ -132,7 +132,13 @@ class ItemReport:
 
 
 def validate_item(label: str, manual: list[DiskDetection], detected: list[DiskDetection]) -> ItemReport:
-    """Compara a deteção de uma amostra com o ground truth manual."""
+    """Compara a deteção de uma amostra com o ground truth manual.
+
+    O IoU médio é a média sobre **todos** os círculos manuais: um círculo
+    manual sem correspondência conta como 0 (falha total) — é a métrica de
+    autoavaliação, válida sem guia externo. Erros de centro/raio referem-se
+    apenas aos pares (não há geometria para comparar num círculo perdido).
+    """
     pairs, unmatched_m, unmatched_d = match_circles(manual, detected)
     ious = [shape_iou(manual[i], detected[j]) for i, j in pairs]
     centers = [math.hypot(manual[i].cx - detected[j].cx, manual[i].cy - detected[j].cy) for i, j in pairs]
@@ -140,6 +146,7 @@ def validate_item(label: str, manual: list[DiskDetection], detected: list[DiskDe
         (shape_mean_radius(detected[j]) - shape_mean_radius(manual[i])) / shape_mean_radius(manual[i]) * 100.0
         for i, j in pairs
     ]
+    mean_iou = (sum(ious) + 0.0 * len(unmatched_m)) / len(manual) if manual else None
     return ItemReport(
         label=label,
         n_manual=len(manual),
@@ -147,7 +154,7 @@ def validate_item(label: str, manual: list[DiskDetection], detected: list[DiskDe
         n_matched=len(pairs),
         n_false_negatives=len(unmatched_m),
         n_false_positives=len(unmatched_d),
-        mean_iou=float(sum(ious) / len(ious)) if ious else None,
+        mean_iou=float(mean_iou) if mean_iou is not None else None,
         mean_center_error=float(sum(centers) / len(centers)) if centers else None,
         mean_radius_error_pct=float(sum(radii) / len(radii)) if radii else None,
     )

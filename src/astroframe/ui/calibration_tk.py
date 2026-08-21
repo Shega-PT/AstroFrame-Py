@@ -49,7 +49,7 @@ from astroframe.calibration.scan import SampleRef, load_frame, scan_samples
 from astroframe.calibration.store import CalibrationItem, CalibrationStore
 from astroframe.calibration.validate import suggest_parameters, validate_all
 from astroframe.config import AstroFrameConfig
-from astroframe.core.stabilizer import DiskDetection, find_all_disks
+from astroframe.core.stabilizer import DiskDetection, find_all_disks, find_disks_for_calibration
 from astroframe.paths import calibration_json
 
 logger = logging.getLogger(__name__)
@@ -429,7 +429,10 @@ class CalibrationTkApp:
         def work() -> None:
             try:
                 assert frame is not None
-                detected = find_all_disks(frame, config)
+                sample = self.samples[self.current_index]
+                item = self.store.get_item(sample.key)
+                expected_n = len(item.circles) if item is not None else 0
+                detected = find_disks_for_calibration(frame, config, expected_n=expected_n)
                 messages.put(("detect", job_id, detected, None))
             except Exception as exc:  # pragma: no cover
                 messages.put(("detect", job_id, None, exc))
@@ -730,11 +733,12 @@ class CalibrationTkApp:
                 for sample in samples:
                     try:
                         frame = load_frame(sample)
-                        detected = find_all_disks(frame, config)
+                        item = self.store.get_item(sample.key)
+                        expected_n = len(item.circles) if item is not None else 0
+                        detected = find_disks_for_calibration(frame, config, expected_n=expected_n)
                     except Exception as exc:
                         errors.append(f"{sample.label}: erro ({exc})")
                         continue
-                    item = self.store.get_item(sample.key)
                     manual = list(item.circles) if item is not None else []
                     rows.append((sample.label, manual, detected))
                 report = validate_all(rows)

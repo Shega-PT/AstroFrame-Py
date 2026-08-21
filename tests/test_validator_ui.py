@@ -84,7 +84,7 @@ def flush(root, seconds: float = 0.8) -> None:
 @pytest.fixture()
 def detect_one(monkeypatch):
     """Deteção determinística: devolve sempre [CIRCLE]."""
-    monkeypatch.setattr(validator, "find_all_disks", lambda _f, _c: [CIRCLE])
+    monkeypatch.setattr(validator, "find_disks_for_calibration", lambda _f, _c, expected_n=None: [CIRCLE])
 
 
 @pytest.fixture()
@@ -134,11 +134,11 @@ def test_app_rejeicao_reavalia_e_termina(root, tmp_path, fake_final_window, monk
     samples = make_samples_dir(tmp_path, n=1)
     calls = {"n": 0}
 
-    def fake_detect(_frame, _config):
+    def fake_detect(_frame, _config, expected_n=None):
         calls["n"] += 1
         return [CIRCLE, GHOST] if calls["n"] == 1 else [CIRCLE]
 
-    monkeypatch.setattr(validator, "find_all_disks", fake_detect)
+    monkeypatch.setattr(validator, "find_disks_for_calibration", fake_detect)
     app = validator.build_app(root, samples_dir=str(samples), state_path=str(samples / "v.json"))
     try:
         pump_detect(app, root)
@@ -349,7 +349,7 @@ def test_final_report_window_aplica_e_salva_pesos(root, tmp_path, detect_one):
         assert "linha 2" in win.text.get("1.0", "end")
 
         win._vars[("reward", "param2")].set(-1.5)
-        win._vars[("punish", "occluded_ratio")].set(0.02)
+        win._vars[("punish", "gaussian_sigma")].set(0.25)
         win.iou_var.set(0.97)
         win.apply()
         assert validator.REWARD_DELTAS["param2"] == -1.5
@@ -407,7 +407,7 @@ def test_tooltip_mostra_e_esconde(root):
 
 def test_run_check_imprime_relatorio(root, tmp_path, monkeypatch, capsys):
     samples = make_samples_dir(tmp_path, n=1)
-    monkeypatch.setattr(validator, "find_all_disks", lambda _f, _c: [CIRCLE])
+    monkeypatch.setattr(validator, "find_disks_for_calibration", lambda _f, _c, expected_n=None: [CIRCLE])
     state = validator.ValidatorState(samples / "v.json")
     state.deltas = {"param2": 5.0}
     state.save()
@@ -419,7 +419,7 @@ def test_run_check_imprime_relatorio(root, tmp_path, monkeypatch, capsys):
 
 def test_run_auto_headless_exporta(root, tmp_path, monkeypatch, capsys):
     samples = make_samples_dir(tmp_path, n=1)
-    monkeypatch.setattr(validator, "find_all_disks", lambda _f, _c: [CIRCLE])
+    monkeypatch.setattr(validator, "find_disks_for_calibration", lambda _f, _c, expected_n=None: [CIRCLE])
     state = validator.ValidatorState(samples / "v.json")
     state.deltas = {"param2": 5.0}
     state.weights["iou"] = 0.95
@@ -435,28 +435,34 @@ def test_run_auto_headless_exporta(root, tmp_path, monkeypatch, capsys):
 
 def test_main_cli_check_auto_reset_e_erro(root, tmp_path, monkeypatch, capsys):
     samples = make_samples_dir(tmp_path, n=1)
-    monkeypatch.setattr(validator, "find_all_disks", lambda _f, _c: [CIRCLE])
-    args = ["--samples", str(samples), "--state", str(samples / "v.json")]
+    monkeypatch.setattr(validator, "find_disks_for_calibration", lambda _f, _c, expected_n=None: [CIRCLE])
+    state_file = samples / "v.json"
+    args = ["--samples", str(samples), "--state", str(state_file)]
 
     assert validator.main(args + ["--check"]) == 0
-    assert validator.main(args + ["--auto", "--series", "1"]) == 0
-    assert (train_dir() / validator.DEFAULT_EXPORT_NAME).exists()
 
+    state_file.write_text("{}")
     assert validator.main(args + ["--reset-state", "--check"]) == 0
     out = capsys.readouterr().out
     assert "Estado de validação reposto" in out
-    state = validator.ValidatorState(samples / "v.json")
+    state = validator.ValidatorState(state_file)
     assert state.deltas == {}
 
     monkeypatch.setattr(validator, "run", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("x")))
-    assert validator.main(["--samples", str(samples), "--state", str(samples / "v.json")]) == 1
+    assert validator.main(["--samples", str(samples), "--state", str(state_file)]) == 1
 
 
-def test_build_parser_iou_default_none():
+def test_build_parser_sem_auto_training():
+    """O treino automático headless (`--auto`) foi removido — o parser já não
+    expõe `--auto`/`--series`/`--iou`/`--epochs`/`--export`."""
     parser = validator.build_parser()
     args = parser.parse_args(["--samples", "s"])
-    assert args.iou is None
-    assert args.series == 3
+    assert not hasattr(args, "auto")
+    assert not hasattr(args, "series")
+    assert not hasattr(args, "iou")
+    assert not hasattr(args, "epochs")
+    assert not hasattr(args, "export")
+    assert args.check is False
 
 
 # ------------------------------------------------------- ramos de cobertura (UI) --
@@ -530,7 +536,7 @@ def test_app_deteçao_com_erro_mostra_mensagem(root, tmp_path, detect_one):
 
 def test_app_deteçao_teimosa_reavalia_ate_completar(root, tmp_path, fake_final_window, monkeypatch):
     samples = make_samples_dir(tmp_path, n=1)
-    monkeypatch.setattr(validator, "find_all_disks", lambda _f, _c: [GHOST])
+    monkeypatch.setattr(validator, "find_disks_for_calibration", lambda _f, _c, expected_n=None: [GHOST])
     app = validator.build_app(root, samples_dir=str(samples), state_path=str(samples / "v.json"))
     try:
         pump_detect(app, root)

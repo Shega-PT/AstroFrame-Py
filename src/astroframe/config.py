@@ -73,8 +73,6 @@ class StabilizerConfig:
     contour_fallback: bool = True
     auto_crop: bool = True
     jitter_alpha: float = 0.5
-    occluded_ratio: float = 0.75
-    occluded_ring: float = 1.25
 
 
 @dataclass

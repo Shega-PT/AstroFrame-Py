@@ -10,12 +10,11 @@ from astroframe.config import AstroFrameConfig
 from astroframe.core.stabilizer import (
     AntiJitterStabilizer,
     DiskDetection,
-    _concentric_companion,
     _intensity_centroid,
-    _is_occluded_artifact,
     center_and_stabilize,
     find_all_disks,
     find_disk_center,
+    find_disks_for_calibration,
 )
 from tests.helpers import center_tolerance, make_disk_image
 
@@ -145,7 +144,7 @@ def test_find_all_disks_duplicados_hough_contorno_nao_repetem(monkeypatch):
     assert centers.count((cx, cy)) == 1
 
 
-def test_find_all_disks_circulos_concentricos_fundem_no_maior(monkeypatch):
+def test_find_all_disks_circulo_concentrico_menor_e_mantido(monkeypatch):
     image, cx, cy = make_disk_image()
 
     def fake_hough(gray, *args, **kwargs):
@@ -154,8 +153,11 @@ def test_find_all_disks_circulos_concentricos_fundem_no_maior(monkeypatch):
     monkeypatch.setattr("astroframe.core.stabilizer.cv2.HoughCircles", fake_hough)
     config = AstroFrameConfig()
     disks = find_all_disks(image, config)
-    assert len(disks) == 1
+    # Um círculo concêntrico pequeno não partilha o mesmo bordo nem é
+    # envelope do maior (raio 40 < 0.9×90) — é mantido como candidato.
+    assert len(disks) == 2
     assert abs(disks[0].radius - 90) <= 2
+    assert abs(disks[1].radius - 40) <= 2
 
 
 def test_find_all_disks_reflexo_afastado_mantido(monkeypatch):
@@ -216,57 +218,150 @@ def test_find_all_disks_descarta_envelope_concentrico_maior(monkeypatch):
     assert abs(disks[0].radius - 20) <= 2
 
 
-def test_find_all_disks_eclipse_total_encontra_companheiro_concentrico(monkeypatch):
-    image = np.zeros((360, 480, 3), dtype=np.uint8)
-    cv2.circle(image, (240, 180), 100, (220, 220, 220), -1)
-    cv2.circle(image, (240, 180), 40, (60, 60, 60), -1)
+def test_find_all_disks_com_disk_filter_filtra(monkeypatch):
+    from astroframe.ai.cnn import DiskFilter, SmallCNN, fit_classifier
+
+    image, cx, cy = make_disk_image()
+    rng = np.random.default_rng(0)
+
+    def _patches(n, kind, seed=0):
+        r = np.random.default_rng(seed)
+        out = []
+        for _ in range(n):
+            p = np.zeros((32, 32))
+            if kind == "disk":
+                yy, xx = np.ogrid[:32, :32]
+                mask = (xx - 16) ** 2 + (yy - 16) ** 2 <= 8**2
+                p[mask] = 1.0
+            else:
+                p = np.clip(r.normal(0.5, 0.3, (32, 32)), 0, 1)
+            out.append(p)
+        return out
+
+    model, _ = fit_classifier(_patches(4, "disk", 1), _patches(4, "noise", 2), epochs=2, seed=6)
+    filtro = DiskFilter(model=model)
+    monkeypatch.setattr("astroframe.core.stabilizer._disk_filter", filtro)
 
     def fake_hough(gray, *args, **kwargs):
-        return np.array([[[240, 180, 100]]], dtype=np.float64)
+        return np.array([[[cx, cy, 30], [cx + 15, cy + 20, 15]]], dtype=np.float64)
 
     monkeypatch.setattr("astroframe.core.stabilizer.cv2.HoughCircles", fake_hough)
-    disks = find_all_disks(image, AstroFrameConfig())
-    companion = [d for d in disks if abs(d.cx - 240) <= 6 and abs(d.cy - 180) <= 6]
+    config = AstroFrameConfig()
+    config.ai.disk_filter = 0.5
+    disks = find_all_disks(image, config)
+    assert len(disks) >= 1
+
+
+def test_find_all_disks_disk_filter_sem_modelo_nao_falha(monkeypatch):
+    from astroframe.ai.cnn import DiskFilter
+
+    image, cx, cy = make_disk_image()
+    filtro = DiskFilter(model=None)
+    monkeypatch.setattr("astroframe.core.stabilizer._disk_filter", filtro)
+
+    def fake_hough(gray, *args, **kwargs):
+        return np.array([[[cx, cy, 30]]], dtype=np.float64)
+
+    monkeypatch.setattr("astroframe.core.stabilizer.cv2.HoughCircles", fake_hough)
+    config = AstroFrameConfig()
+    config.ai.disk_filter = 0.5
+    disks = find_all_disks(image, config)
+    assert len(disks) >= 1
+
+
+def test_find_disks_for_calibration_escada_atinge_contagem_calibrada(monkeypatch):
+    image, cx, cy = make_disk_image()
+    big = DiskDetection(cx, cy, 90)
+    small = DiskDetection(60, 50, 25)
+    calls = {"n": 0}
+
+    def fake_hough(gray, *args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return np.array([[[big.cx, big.cy, big.radius]]], dtype=np.float64)
+        if calls["n"] == 6:
+            return np.array(
+                [[[big.cx, big.cy, big.radius], [small.cx, small.cy, small.radius]]],
+                dtype=np.float64,
+            )
+        return None
+
+    monkeypatch.setattr("astroframe.core.stabilizer.cv2.HoughCircles", fake_hough)
+    disks = find_disks_for_calibration(image, AstroFrameConfig(), expected_n=2)
     assert len(disks) == 2
-    assert min(d.radius for d in companion) <= 50
+    assert any(abs(d.cx - small.cx) <= 2 and abs(d.cy - small.cy) <= 2 for d in disks)
+    assert calls["n"] == 6  # parou na escada ao atingir os 2 esperados
 
 
-def test_is_occluded_artifact_anel_fora_da_imagem_nao_e_artefacto():
-    cfg = AstroFrameConfig().stabilizer
-    gray = np.zeros((360, 480), dtype=np.uint8)
-    assert not _is_occluded_artifact(gray, DiskDetection(-7, 100, 5), DiskDetection(100, 100, 120), 1.0, cfg)
+def test_find_disks_for_calibration_escada_esgotada_nao_inventa_discos(monkeypatch):
+    image, cx, cy = make_disk_image()
+    calls = {"n": 0}
+
+    def fake_hough(gray, *args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return np.array([[[cx, cy, 90]]], dtype=np.float64)
+        return None
+
+    monkeypatch.setattr("astroframe.core.stabilizer.cv2.HoughCircles", fake_hough)
+    disks = find_disks_for_calibration(image, AstroFrameConfig(), expected_n=5)
+    assert len(disks) == 1
+    assert calls["n"] == 7  # 3 passes normais + 4 da escada, esgotada
 
 
-def test_is_occluded_artifact_candidato_fora_da_imagem_nao_e_artefacto():
-    cfg = AstroFrameConfig().stabilizer
-    gray = np.zeros((360, 480), dtype=np.uint8)
-    assert not _is_occluded_artifact(gray, DiskDetection(485, 100, 5), DiskDetection(100, 100, 600), 1.0, cfg)
+def test_find_disks_for_calibration_sem_contagem_nao_escala(monkeypatch):
+    image, cx, cy = make_disk_image()
+    calls = {"n": 0}
+
+    def fake_hough(gray, *args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return np.array([[[cx, cy, 90]]], dtype=np.float64)
+        return None
+
+    monkeypatch.setattr("astroframe.core.stabilizer.cv2.HoughCircles", fake_hough)
+    disks = find_disks_for_calibration(image, AstroFrameConfig(), expected_n=None)
+    assert len(disks) == 1
+    assert calls["n"] == 3  # sem escada de sensibilidade
 
 
-def test_concentric_companion_primario_junto_ao_bordo_devolve_none():
-    cfg = AstroFrameConfig().stabilizer
-    blur = np.zeros((360, 480), dtype=np.uint8)
-    cv2.circle(blur, (30, 30), 10, (200,), -1)
-    assert _concentric_companion(blur, DiskDetection(30, 30, 10), 7, cfg, 1.0) is None
+def test_find_disks_for_calibration_nao_escala_quando_contagem_atingida(monkeypatch):
+    image, cx, cy = make_disk_image()
+    big = DiskDetection(cx, cy, 90)
+    small = DiskDetection(60, 50, 25)
+    calls = {"n": 0}
+
+    def fake_hough(gray, *args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return np.array(
+                [[[big.cx, big.cy, big.radius], [small.cx, small.cy, small.radius]]],
+                dtype=np.float64,
+            )
+        return None
+
+    monkeypatch.setattr("astroframe.core.stabilizer.cv2.HoughCircles", fake_hough)
+    disks = find_disks_for_calibration(image, AstroFrameConfig(), expected_n=2)
+    assert len(disks) == 2
+    assert calls["n"] == 3  # a contagem já estava atingida
 
 
-def test_concentric_companion_depressao_escura_encontra_lua():
-    cfg = AstroFrameConfig().stabilizer
-    blur = np.zeros((360, 480), dtype=np.uint8)
-    cv2.circle(blur, (240, 180), 100, (200,), -1)
-    cv2.circle(blur, (240, 180), 35, (60,), -1)
-    companion = _concentric_companion(blur, DiskDetection(240, 180, 100), 7, cfg, 1.0)
-    assert companion is not None
-    assert abs(companion.cx - 240) <= 3 and abs(companion.cy - 180) <= 3
-    assert abs(companion.radius - 35) <= 6
+def test_find_disks_for_calibration_imagem_minima_devolve_vazio():
+    disks = find_disks_for_calibration(
+        np.zeros((10, 10, 3), dtype=np.uint8), AstroFrameConfig(), expected_n=2
+    )
+    assert disks == []
 
 
-def test_concentric_companion_depressao_demasiado_clara_devolve_none():
-    cfg = AstroFrameConfig().stabilizer
-    blur = np.zeros((360, 480), dtype=np.uint8)
-    cv2.circle(blur, (240, 180), 100, (200,), -1)
-    cv2.circle(blur, (240, 180), 35, (175,), -1)
-    assert _concentric_companion(blur, DiskDetection(240, 180, 100), 7, cfg, 1.0) is None
+def test_find_disks_for_calibration_sem_deteccao_nao_escala(monkeypatch):
+    image = np.zeros((480, 360, 3), dtype=np.uint8)
+
+    def fake_hough(gray, *args, **kwargs):
+        return None
+
+    monkeypatch.setattr("astroframe.core.stabilizer.cv2.HoughCircles", fake_hough)
+    disks = find_disks_for_calibration(image, AstroFrameConfig(), expected_n=3)
+    assert disks == []  # sem nenhum disco, a escada não arranca
 
 
 def test_antijitter_last_detection_mantido_em_frame_sem_deteccao(monkeypatch):

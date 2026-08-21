@@ -172,7 +172,7 @@ def test_criar_mover_redimensionar_com_o_rato(root, tmp_path, monkeypatch):
 
 
 def test_deteccao_automatica_ao_carregar(root, tmp_path, monkeypatch):
-    monkeypatch.setattr(calibration_tk, "find_all_disks", lambda frame, config: DETECTED)
+    monkeypatch.setattr(calibration_tk, "find_disks_for_calibration", lambda frame, config, expected_n=None: DETECTED)
     app = build(root, make_samples(tmp_path))
     try:
         app.auto_detect.set(True)
@@ -187,7 +187,7 @@ def test_deteccao_automatica_ao_carregar(root, tmp_path, monkeypatch):
 
 
 def test_on_detect_done_job_antigo_e_erro(root, tmp_path, monkeypatch):
-    monkeypatch.setattr(calibration_tk, "find_all_disks", lambda frame, config: DETECTED)
+    monkeypatch.setattr(calibration_tk, "find_disks_for_calibration", lambda frame, config, expected_n=None: DETECTED)
     app = build(root, make_samples(tmp_path))
     try:
         app._queue.put(("detect", app._job_id + 99, DETECTED, None))
@@ -202,7 +202,7 @@ def test_on_detect_done_job_antigo_e_erro(root, tmp_path, monkeypatch):
 
 
 def test_detect_now_alternador_e_parametros(root, tmp_path, monkeypatch):
-    monkeypatch.setattr(calibration_tk, "find_all_disks", lambda frame, config: DETECTED)
+    monkeypatch.setattr(calibration_tk, "find_disks_for_calibration", lambda frame, config, expected_n=None: DETECTED)
     app = build(root, make_samples(tmp_path))
     try:
         app.frame = None
@@ -439,7 +439,7 @@ def test_validar_tudo_report_erros_e_sugestoes(root, tmp_path, monkeypatch):
     )
     store.save()
     (samples / "sample_1.jpg").write_bytes(b"corrompida")
-    monkeypatch.setattr(calibration_tk, "find_all_disks", lambda frame, config: [DiskDetection(301, 140, 89)])
+    monkeypatch.setattr(calibration_tk, "find_disks_for_calibration", lambda frame, config, expected_n=None: [DiskDetection(301, 140, 89)])
     app = build(root, samples)
     try:
         app._busy = True

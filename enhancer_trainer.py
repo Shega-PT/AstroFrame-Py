@@ -7,16 +7,14 @@ denoising + nitidez):
 * **manual** (interface): cada amostra é mostrada lado a lado — sem CNN vs
   com CNN — e o utilizador julga: *Válido* guarda o par (entrada, saída com
   CNN); *Rejeitado* guarda (entrada, entrada), ensinando a rede a não mexer.
-* **automático** (`--auto`): cada série degrada sinteticamente a imagem
-  melhorada (ruído gaussiano + desfoque) e treina a rede residual a
-  recuperar a versão limpa; entre séries o candidato é comparado com o
-  melhor registado no banco (campeão): só é promovido se for estritamente
-  melhor, senão o treino seguinte parte dos pesos do campeão.
+* **avaliação headless** (`--check`): compara todas as amostras com/sem CNN
+  e imprime o relatório de estrelas, sem janela.
 
 O campeão promovido fica em `Logs/weights/enhancer_cnn.npz` (lido pelo
 `enhance_image` quando `config.ai.cnn_enhance` está ligado). O estado do
 treino e a calibração vivem por omissão em `Logs/train/` e cada ronda deixa
-o relatório em `Logs/logs/ia/`.
+o relatório em `Logs/logs/ia/`. O treino automático (`--auto`) foi removido:
+a rede só é treinada com o julgamento manual da interface.
 """
 
 import argparse
@@ -42,7 +40,7 @@ from astroframe.calibration.scan import load_frame, scan_samples
 from astroframe.calibration.store import CalibrationStore
 from astroframe.config import AstroFrameConfig
 from astroframe.core.enhancer import enhance_image
-from astroframe.core.stabilizer import DiskDetection
+from astroframe.core.stabilizer import DiskDetection, find_all_disks, find_disks_for_calibration
 from astroframe.paths import (
     calibration_json,
     logs_ia_dir,
@@ -146,11 +144,16 @@ def sample_stars(
     detection: DiskDetection | None,
     config: AstroFrameConfig,
     with_cnn: bool,
+    disks: list[DiskDetection] | None = None,
 ) -> float:
-    """Estrelas (0–5) da imagem melhorada, com ou sem a CNN residual."""
+    """Estrelas (0–5) da imagem melhorada, com ou sem a CNN residual.
+
+    `disks` reutiliza as deteções já calculadas pelo chamador — a
+    avaliação nunca volta a correr o Hough.
+    """
     cfg = dataclasses.replace(config, ai=dataclasses.replace(config.ai, cnn_enhance=with_cnn))
     enhanced = enhance_image(frame, cfg, use_denoise=True)
-    return float(score_image(enhanced, detection, config).stars)
+    return float(score_image(enhanced, detection, config, disks=disks).stars)
 
 
 class EnhancerState:
@@ -286,25 +289,41 @@ def build_report(
     store: CalibrationStore,
     config: AstroFrameConfig,
     pairs_count: int = 0,
+    progress: bool = False,
 ) -> EnhancerReport:
-    """Relatório headless: avalia todas as amostras com e sem CNN (sem treinar)."""
+    """Relatório headless: avalia todas as amostras com e sem CNN (sem treinar).
+
+    A deteção corre **uma única vez** por amostra e é reutilizada nas duas
+    avaliações; com `progress` imprime o avanço por amostra (essencial em
+    pastas grandes/vídeos longos — o `--check` deixa de parecer pendurado).
+    """
     done = 0
     stars_cnn: list[float] = []
     stars_plain: list[float] = []
     errors: list[str] = []
+    total = len(samples)
     for sample in samples:
         try:
             frame = load_frame(sample)
         except Exception as exc:
             errors.append(f"{sample.label}: erro ao ler ({exc})")
             continue
+        item = store.get_item(sample.key)
+        expected_n = len(item.circles) if item is not None else 0
+        try:
+            disks = find_disks_for_calibration(frame, config, expected_n=expected_n)
+        except Exception as exc:
+            errors.append(f"{sample.label}: erro na deteção ({exc})")
+            continue
         detection = _detection(store, sample.key)
-        stars_cnn.append(sample_stars(frame, detection, config, with_cnn=True))
-        stars_plain.append(sample_stars(frame, detection, config, with_cnn=False))
+        stars_cnn.append(sample_stars(frame, detection, config, with_cnn=True, disks=disks))
+        stars_plain.append(sample_stars(frame, detection, config, with_cnn=False, disks=disks))
         done += 1
+        if progress:
+            print(f"  [{done}/{total}] {sample.label} …", flush=True)
     return EnhancerReport(
         samples_done=done,
-        samples_total=len(samples),
+        samples_total=total,
         stars_cnn=float(np.mean(stars_cnn)) if stars_cnn else None,
         stars_plain=float(np.mean(stars_plain)) if stars_plain else None,
         pairs=pairs_count,
@@ -406,14 +425,20 @@ def run_auto_headless(
     epochs: int = 40,
     seed: int = AUTO_SEED,
 ) -> int:
-    """`--auto`: N séries de treino com pares sintéticos e campeão."""
+    """Treino headless mantido declarado (sem entrada na CLI desde a remoção do
+    auto-treino): N séries com pares sintéticos e campeão no banco.
+
+    Pode ser chamado programaticamente pelos testes; a interface usa o
+    julgamento manual. Entre séries o candidato é comparado com o melhor
+    registado no banco e só é promovido se for estritamente melhor.
+    """
     config = AstroFrameConfig.from_yaml(config_path) if config_path else AstroFrameConfig()
     state = EnhancerState(state_path or train_dir() / DEFAULT_STATE_NAME)
     samples = scan_samples(samples_dir)
     store = CalibrationStore(calibration_json(samples_dir))
     db = FeedbackDB()
 
-    print(f"AstroFrame — treino automático da CNN de edição ({len(samples)} amostras, {series} série(s))")
+    print(f"AstroFrame — treino automático da CNN de edição ({len(samples)} amostras, {series} série(s))", flush=True)
     all_pairs: list[tuple[np.ndarray, np.ndarray]] = []
     champion_path: str | Path | None = None
     final_metrics: dict | None = None
@@ -432,10 +457,13 @@ def run_auto_headless(
                 degraded_bgr = degrade(clean_bgr, rng)
                 pairs_series.extend(crop_pairs(clean_bgr, degraded_bgr, rng))
                 detection = _detection(store, sample.key)
+                item = store.get_item(sample.key)
+                expected_n = len(item.circles) if item is not None else 0
+                disks = find_disks_for_calibration(frame, config, expected_n=expected_n)
                 cfg_cnn = dataclasses.replace(config, ai=dataclasses.replace(config.ai, cnn_enhance=True))
                 enhanced_cnn = enhance_image(frame, cfg_cnn, use_denoise=True)
-                stars_cnn.append(float(score_image(enhanced_cnn, detection, config).stars))
-                stars_plain.append(float(score_image(clean_bgr, detection, config).stars))
+                stars_cnn.append(float(score_image(enhanced_cnn, detection, config, disks=disks).stars))
+                stars_plain.append(float(score_image(clean_bgr, detection, config, disks=disks).stars))
                 done += 1
             except Exception as exc:
                 errors.append(f"{sample.label}: erro ({exc})")
@@ -488,8 +516,8 @@ def run_check(
     state = EnhancerState(state_path or train_dir() / DEFAULT_STATE_NAME)
     samples = scan_samples(samples_dir)
     store = CalibrationStore(calibration_json(samples_dir))
-    report = build_report(samples, store, config, pairs_count=0)
-    print(f"AstroFrame — verificação da melhoria CNN ({len(samples)} amostras)")
+    print(f"AstroFrame — verificação da melhoria CNN ({len(samples)} amostras)", flush=True)
+    report = build_report(samples, store, config, pairs_count=0, progress=True)
     for line in report.lines():
         print(line)
     if state.round:
@@ -526,37 +554,6 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Modo sem interface: avalia todas as amostras com/sem CNN e imprime o relatório",
     )
-    parser.add_argument(
-        "--auto",
-        action="store_true",
-        help="Treino automático sem interface (pares sintéticos + campeão no banco)",
-    )
-    parser.add_argument(
-        "--series",
-        type=int,
-        default=3,
-        help="(auto) número de séries de treino (omissão: 3)",
-    )
-    parser.add_argument(
-        "--epochs",
-        type=int,
-        default=40,
-        help="(auto) épocas de treino da CNN residual (omissão: 40)",
-    )
-    parser.add_argument(
-        "--seed",
-        type=int,
-        default=AUTO_SEED,
-        help="semente das degradações sintéticas (omissão: 42)",
-    )
-    parser.add_argument(
-        "--export",
-        default=None,
-        help=(
-            f"Ficheiro .npz com o modelo campeão para o sistema real "
-            f"(omissão: Logs/train/{DEFAULT_EXPORT_NAME})"
-        ),
-    )
     return parser
 
 
@@ -571,13 +568,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.check:
             return run_check(args.samples, args.config, state_path)
-        if args.auto:
-            return run_auto_headless(
-                args.samples, args.config, state_path, args.series, args.export, args.epochs, args.seed
-            )
         return run_gui(samples_dir=args.samples, config_path=args.config, state_path=state_path)
-    except Exception:
+    except Exception as exc:
         logging.exception("Falha ao arrancar o enhancer_trainer")
+        print(f"Erro: {exc}", file=sys.stderr)
         return 1
 
 
@@ -595,7 +589,16 @@ def run_gui(
     state = EnhancerState(state_path or train_dir() / DEFAULT_STATE_NAME)
     samples = scan_samples(samples_dir)
     store = CalibrationStore(calibration_json(samples_dir))
-    EnhancerTkApp(samples, store, config, state)
+    try:
+        import tkinter as tk
+    except ImportError as exc:  # pragma: no cover
+        raise RuntimeError("Interface manual indisponível: tkinter em falta. Usa --check.") from exc
+    root = tk.Tk()
+    root.withdraw()
+    app = EnhancerTkApp(samples, store, config, state, root=root)
+    root.mainloop()
+    if app is not None and hasattr(app, "wait_idle"):
+        app.wait_idle()
     return 0
 
 
@@ -614,6 +617,7 @@ class EnhancerTkApp:
         store: CalibrationStore,
         config: AstroFrameConfig,
         state: EnhancerState,
+        root=None,
     ):
         try:
             import tkinter as tk
@@ -621,7 +625,7 @@ class EnhancerTkApp:
             from PIL import Image, ImageTk
         except ImportError as exc:  # pragma: no cover
             raise RuntimeError(
-                "Interface manual indisponível: tkinter/PIL em falta. Usa --auto ou --check."
+                "Interface manual indisponível: tkinter/PIL em falta. Usa --check."
             ) from exc
         self.tk = tk
         self.Image = Image
@@ -634,12 +638,20 @@ class EnhancerTkApp:
         self.pairs: list[tuple[np.ndarray, np.ndarray]] = []
         self._champion_path: str | Path | None = None
         self._precomputed: list[tuple[np.ndarray, np.ndarray]] = []
+        self._auto_stars: tuple[float, float] = (0.0, 0.0)
+        self._loading_index = 0
+        self._sample_results: queue.Queue | None = None
+        self._workers: list[threading.Thread] = []
+        self.root = root
         self._build_ui()
         self._load_sample()
 
     def _build_ui(self) -> None:
         tk = self.tk
-        self.top = tk.Toplevel()
+        if self.root is None:
+            self.root = tk.Tk()
+            self.root.withdraw()
+        self.top = tk.Toplevel(self.root)
         self.top.title("AstroFrame — Treino da CNN de edição (manual)")
         self.top.geometry("900x560")
         main = tk.Frame(self.top, padx=10, pady=10)
@@ -656,6 +668,19 @@ class EnhancerTkApp:
         self.right = tk.Label(images, bg="#1c1c1e")
         self.left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 4))
         self.right.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(4, 0))
+        stars_row = tk.Frame(main)
+        stars_row.pack(fill=tk.X, pady=(4, 0))
+        tk.Label(stars_row, text="Avaliação manual:", font=("", 9)).pack(side=tk.LEFT)
+        self.stars_var = tk.DoubleVar(value=3.0)
+        self.stars_scale = tk.Scale(
+            stars_row, from_=0.0, to=5.0, resolution=0.1, orient=tk.HORIZONTAL,
+            variable=self.stars_var, length=200,
+        )
+        self.stars_scale.pack(side=tk.LEFT, padx=(8, 0))
+        self.stars_auto_label = tk.StringVar(value="")
+        tk.Label(stars_row, textvariable=self.stars_auto_label, fg="#c90", font=("", 9, "bold")).pack(
+            side=tk.LEFT, padx=(12, 0)
+        )
         buttons = tk.Frame(main)
         buttons.pack(fill=tk.X, pady=(8, 0))
         tk.Button(buttons, text="◀ Anterior", command=self._prev, bg="#445").pack(side=tk.LEFT)
@@ -677,29 +702,64 @@ class EnhancerTkApp:
             self.status.set("Sem amostras na pasta indicada.")
             return
         sample = self.samples[self.index]
+        self._loading_index = self.index
+        self._precomputed = []
+        self._auto_stars = (0.0, 0.0)
+        self.stars_var.set(3.0)
+        self.stars_auto_label.set("")
+        self.info.set(f"[{self.index + 1}/{len(self.samples)}] {sample.label} — a processar…")
+        self.status.set(f"A processar {sample.label} (deteção + melhoria com/sem CNN)…")
+        results: queue.Queue = queue.Queue()
+
+        def work() -> None:
+            try:
+                frame = load_frame(sample)
+                item = self.store.get_item(sample.key)
+                expected_n = len(item.circles) if item is not None else 0
+                disks = find_disks_for_calibration(frame, self.config, expected_n=expected_n)
+                detection = _detection(self.store, sample.key)
+                cfg_plain = dataclasses.replace(
+                    self.config, ai=dataclasses.replace(self.config.ai, cnn_enhance=False)
+                )
+                plain_bgr = enhance_image(frame, cfg_plain, use_denoise=True)
+                cfg_cnn = dataclasses.replace(
+                    self.config, ai=dataclasses.replace(self.config.ai, cnn_enhance=True)
+                )
+                cnn_bgr = enhance_image(frame, cfg_cnn, use_denoise=True)
+                stars_plain = score_image(plain_bgr, detection, self.config, disks=disks).stars
+                stars_cnn = score_image(cnn_bgr, detection, self.config, disks=disks).stars
+                results.put((plain_bgr, cnn_bgr, sample.label, stars_plain, stars_cnn))
+            except Exception as exc:
+                results.put(exc)
+
+        thread = threading.Thread(target=work, daemon=True)
+        self._load_thread = thread
+        thread.start()
+        self._sample_results = results
+        self._workers.append(thread)
+        self.top.after(50, self._poll_sample)
+
+    def _poll_sample(self) -> None:
         try:
-            frame = load_frame(sample)
-            cfg_plain = dataclasses.replace(
-                self.config, ai=dataclasses.replace(self.config.ai, cnn_enhance=False)
-            )
-            plain_bgr = enhance_image(frame, cfg_plain, use_denoise=True)
-            cfg_cnn = dataclasses.replace(
-                self.config, ai=dataclasses.replace(self.config.ai, cnn_enhance=True)
-            )
-            cnn_bgr = enhance_image(frame, cfg_cnn, use_denoise=True)
-        except Exception as exc:
-            self.status.set(f"{sample.label}: erro ao processar ({exc})")
-            self._precomputed = []
+            outcome = self._sample_results.get_nowait()
+        except queue.Empty:
+            self.top.after(50, self._poll_sample)
             return
+        if self._loading_index != self.index:
+            return
+        if isinstance(outcome, Exception):
+            self.status.set(f"{self.samples[self.index].label}: erro ao processar ({outcome})")
+            return
+        plain_bgr, cnn_bgr, label, stars_plain, stars_cnn = outcome
         self._precomputed = [(plain_bgr, cnn_bgr)]
-        detection = _detection(self.store, sample.key)
-        stars_plain = score_image(plain_bgr, detection, self.config).stars
-        stars_cnn = score_image(cnn_bgr, detection, self.config).stars
+        self._auto_stars = (stars_plain, stars_cnn)
+        self.stars_auto_label.set(f"auto: {stars_plain:.1f}★ → {stars_cnn:.1f}★")
         self.info.set(
-            f"[{self.index + 1}/{len(self.samples)}] {sample.label} — "
+            f"[{self.index + 1}/{len(self.samples)}] {label} — "
             f"sem CNN {stars_plain:.1f}★ · com CNN {stars_cnn:.1f}★ · "
             f"pares: {len(self.pairs)}"
         )
+        self.status.set("Pronto.")
         self._show()
 
     def _show(self) -> None:
@@ -731,14 +791,18 @@ class EnhancerTkApp:
         x = _l_channel(plain_bgr)
         y = _l_channel(cnn_bgr) if valid else x.copy()
         self.pairs.append((x, y))
+        manual_stars = self.stars_var.get()
+        auto_plain, auto_cnn = self._auto_stars
+        self.status.set(
+            f"Par guardado ({'Válido' if valid else 'Rejeitado'}) — "
+            f"auto {auto_plain:.1f}★→{auto_cnn:.1f}★ · manual {manual_stars:.1f}★ — "
+            f"{len(self.pairs)} pares acumulados."
+        )
         if valid:
             self.state.pairs_positive += 1
         else:
             self.state.pairs_identity += 1
         self.state.save()
-        self.status.set(
-            f"Par guardado ({'Válido' if valid else 'Rejeitado'}) — {len(self.pairs)} pares acumulados."
-        )
         self._next()
 
     def _accept(self) -> None:
@@ -790,9 +854,25 @@ class EnhancerTkApp:
                 text = f"Erro no treino: {exc}"
             results.put(text)
 
-        threading.Thread(target=work, daemon=True).start()
+        thread = threading.Thread(target=work, daemon=True)
+        thread.start()
+        self._workers.append(thread)
         self._train_results = results
         self.top.after(50, self._poll_train)
+
+    def wait_idle(self, timeout: float = 30.0) -> None:
+        """Aguarda as threads de trabalho em curso (encerramento limpo).
+
+        Chamado pelo `run_gui` ao sair do `mainloop` (ex.: nos testes, o
+        mainloop fecha após ~60 ms e a carga da amostra pode ainda estar a
+        correr); espera apenas pelas threads ativas, sem bloquear para sempre.
+        """
+        deadline = time.monotonic() + timeout
+        for thread in list(self._workers):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            thread.join(timeout=remaining)
 
     def _poll_train(self) -> None:
         try:

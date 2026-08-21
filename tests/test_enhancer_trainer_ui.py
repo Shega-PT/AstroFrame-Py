@@ -52,11 +52,42 @@ def make_app(root, tmp_path: Path, n: int = 2) -> et.EnhancerTkApp:
         samples.append(SampleRef("image", samples_dir / name, None, name, name))
     store.save()
     state = et.EnhancerState(tmp_path / "enhancer_state.json")
-    return et.EnhancerTkApp(samples, store, AstroFrameConfig(), state)
+    return et.EnhancerTkApp(samples, store, AstroFrameConfig(), state, root=root)
+
+
+def pump_until(app, root, predicate, deadline: float = 20.0) -> bool:
+    """Bombeia o loop Tk até `predicate()` ser verdade (a carga é assíncrona)."""
+    start = time.monotonic()
+    while time.monotonic() - start < deadline:
+        root.update()
+        if predicate():
+            root.update()
+            return True
+        time.sleep(0.01)
+    root.update()
+    return bool(predicate())
+
+
+def wait_loaded(app, root, deadline: float = 20.0) -> bool:
+    """Espera a carga da amostra atual terminar (thread de fundo)."""
+    return pump_until(app, root, lambda: bool(app._precomputed), deadline)
+
+
+def accept_pair(app, root) -> None:
+    """Espera a carga, aceita a amostra atual e espera a carga da seguinte.
+
+    A aceitação navega para a amostra seguinte e dispara a carga assíncrona —
+    espera-se também essa carga para nunca deixar threads de trabalho vivas
+    no fim do teste (o teardown com a raiz destruída abortaria o processo).
+    """
+    assert wait_loaded(app, root)
+    app._accept()
+    assert wait_loaded(app, root)
 
 
 def test_app_carrega_primeira_amostra(root, tmp_path):
     app = make_app(root, tmp_path)
+    assert wait_loaded(app, root)
     assert len(app.samples) == 2
     assert "sample_0.jpg" in app.info.get()
     assert "pares: 0" in app.info.get()
@@ -66,17 +97,22 @@ def test_app_carrega_primeira_amostra(root, tmp_path):
 
 def test_app_aceite_rejeitado_e_navegacao(root, tmp_path):
     app = make_app(root, tmp_path)
+    assert wait_loaded(app, root)
     app._accept()
     assert len(app.pairs) == 1
     assert app.state.pairs_positive == 1
+    assert wait_loaded(app, root)
     assert "pares: 1" in app.info.get()
     assert app.index == 1
     app._reject()
     assert len(app.pairs) == 2
     assert app.state.pairs_identity == 1
+    assert wait_loaded(app, root)
     app._prev()
+    assert wait_loaded(app, root)
     assert app.index == 1
     app._prev()
+    assert wait_loaded(app, root)
     assert app.index == 0
     x, y = app.pairs[0]
     assert x.shape == (360, 480)
@@ -98,8 +134,8 @@ def test_app_sem_amostras(root, tmp_path):
 
 def test_app_treinar_agora_usa_agente_fake(root, tmp_path, monkeypatch):
     app = make_app(root, tmp_path)
-    app._accept()
-    app._accept()
+    accept_pair(app, root)
+    accept_pair(app, root)
 
     calls: dict = {"n": 0}
 
@@ -124,8 +160,8 @@ def test_app_treinar_agora_usa_agente_fake(root, tmp_path, monkeypatch):
 
 def test_app_treinar_agora_erro(root, tmp_path, monkeypatch):
     app = make_app(root, tmp_path)
-    app._accept()
-    app._accept()
+    accept_pair(app, root)
+    accept_pair(app, root)
 
     def failing(*args, **kwargs):
         raise RuntimeError("falha sintética")
@@ -149,6 +185,7 @@ def test_app_erro_de_processamento_de_amostra(root, tmp_path):
     store = CalibrationStore(samples_dir / "calibration.json")
     samples = [SampleRef("image", samples_dir / "quebrada.jpg", None, "q.jpg", "q.jpg")]
     app = et.EnhancerTkApp(samples, store, AstroFrameConfig(), et.EnhancerState(tmp_path / "s.json"))
+    assert pump_until(app, root, lambda: "erro ao processar" in app.status.get())
     assert "erro ao processar" in app.status.get()
 
 
@@ -162,16 +199,71 @@ def test_run_gui_inicia_janela(root, tmp_path, monkeypatch):
     store.save()
     created: list = []
 
-    def fake_app(samples, store, config, state):
+    def fake_app(samples, store, config, state, root=None):
         created.append(samples)
+        assert root is not None
+        root.destroy()
 
     monkeypatch.setattr(et, "EnhancerTkApp", fake_app)
     assert et.run_gui(str(samples_dir), state_path=str(tmp_path / "s.json")) == 0
     assert created and len(created[0]) == 1
 
 
+def test_run_gui_janela_real_e_mainloop(root, tmp_path, monkeypatch):
+    samples_dir = tmp_path / "samples"
+    samples_dir.mkdir()
+    image, cx, cy = make_disk_image()
+    cv2.imwrite(str(samples_dir / "a.jpg"), image)
+    store = CalibrationStore(samples_dir / "calibration.json")
+    store.items["a.jpg"] = CalibrationItem("a.jpg", "image", None, 480, 360, [CIRCLE])
+    store.save()
+    looped: list[str] = []
+
+    real_mainloop = root.mainloop
+
+    def fake_mainloop(self=None):
+        looped.append("mainloop")
+        real_mainloop()
+
+    monkeypatch.setattr(type(root), "mainloop", fake_mainloop)
+    assert et.run_gui(str(samples_dir), state_path=str(tmp_path / "s.json")) == 0
+    assert looped == ["mainloop"]
+
+
+def test_app_cria_raiz_propria_sem_root(tmp_path):
+    samples_dir = tmp_path / "samples"
+    samples_dir.mkdir()
+    image, cx, cy = make_disk_image()
+    cv2.imwrite(str(samples_dir / "a.jpg"), image)
+    store = CalibrationStore(samples_dir / "calibration.json")
+    store.items["a.jpg"] = CalibrationItem("a.jpg", "image", None, 480, 360, [CIRCLE])
+    store.save()
+    samples = [
+        SampleRef("image", samples_dir / "a.jpg", None, "a.jpg", "a.jpg"),
+    ]
+    app = et.EnhancerTkApp(samples, store, AstroFrameConfig(), et.EnhancerState(tmp_path / "s.json"))
+    try:
+        assert app.root is not None
+        assert app.root != app.top
+        assert wait_loaded(app, app.root)  # espera a thread de carga antes de fechar
+    finally:
+        app._on_close() if hasattr(app, "_on_close") else None
+        app.top.destroy()
+        app.root.destroy()
+
+
+def test_main_imprime_erro_no_terminal(tmp_path, monkeypatch, capsys):
+    def boom(**kwargs):
+        raise RuntimeError("falha sintética")
+
+    monkeypatch.setattr(et, "run_gui", boom)
+    assert et.main(["--samples", str(tmp_path)]) == 1
+    assert "falha sintética" in capsys.readouterr().err
+
+
 def test_app_show_sem_imagem_precomputada(root, tmp_path):
     app = make_app(root, tmp_path)
+    assert wait_loaded(app, root)
     before = app.left.cget("image")
     app._precomputed = []
     app._show()
@@ -180,15 +272,15 @@ def test_app_show_sem_imagem_precomputada(root, tmp_path):
 
 def test_app_treinar_com_um_par_so(root, tmp_path):
     app = make_app(root, tmp_path)
-    app._accept()
+    accept_pair(app, root)
     app._train_now()
     assert "Precisas de pelo menos 2 pares" in app.status.get()
 
 
 def test_app_treinar_resultado_skipped(root, tmp_path, monkeypatch):
     app = make_app(root, tmp_path)
-    app._accept()
-    app._accept()
+    accept_pair(app, root)
+    accept_pair(app, root)
 
     def fake_train_round(pairs, state, round_n, **kwargs):
         return {"skipped": True}
@@ -207,6 +299,7 @@ def test_app_treinar_resultado_skipped(root, tmp_path, monkeypatch):
 
 def test_app_poll_train_diretamente(root, tmp_path):
     app = make_app(root, tmp_path)
+    assert wait_loaded(app, root)
     app._train_results = queue.Queue()
     app._train_results.put("mensagem direta")
     app._poll_train()
@@ -226,8 +319,8 @@ def test_main_module_guard(tmp_path, monkeypatch):
 
 def test_app_treinar_agora_atualiza_campeao(root, tmp_path, monkeypatch):
     app = make_app(root, tmp_path)
-    app._accept()
-    app._accept()
+    accept_pair(app, root)
+    accept_pair(app, root)
 
     def fake_train_round(pairs, state, round_n, **kwargs):
         return {

@@ -10,7 +10,7 @@ sempre 5 estrelas sem mérito:
   real e um círculo perfeito do raio detetado;
 - **noise** — variância do Laplaciano na coroa (ruído baixo → nota alta);
 - **contrast** — gama dinâmica (p99/p50) dentro da coroa;
-- **reflections** — penalização por círculos secundários (ghosts) encontrados.
+- **reflections** — penalização por reflexos da lente (ghosts) encontrados.
 
 Cada métrica vale 0..1; a média ponderada (pesos em `score:` do YAML) é
 multiplicada por 5 e arredondada a 1 casa.
@@ -24,7 +24,7 @@ import cv2
 import numpy as np
 
 from astroframe.config import AstroFrameConfig
-from astroframe.core.stabilizer import DiskDetection, find_all_disks
+from astroframe.core.stabilizer import DiskDetection, GHOST_RADIUS_RATIO, find_all_disks
 
 _STAR_TEXT = {
     5: "Excelente",
@@ -116,9 +116,26 @@ def _contrast_range(image: np.ndarray, cx: int, cy: int, radius: float, config: 
     return float(np.clip((ratio - 1.0) / 4.0, 0.0, 1.0))
 
 
-def _reflection_penalty(image: np.ndarray, cx: int, cy: int, radius: float, cfg) -> float:
-    """0..1: 1.0 = sem reflexos; cada círculo-ghost relevante reduz a nota."""
-    disks = find_all_disks(image, cfg)
+def _reflection_penalty(
+    image: np.ndarray,
+    cx: int,
+    cy: int,
+    radius: float,
+    cfg,
+    disks: list[DiskDetection] | None = None,
+) -> float:
+    """0..1: 1.0 = sem reflexos; cada círculo-ghost relevante reduz a nota.
+
+    Um disco é um reflexo da lente (ghost) se for **pequeno face ao astro
+    maior** (raio < `GHOST_RADIUS_RATIO` × o do primário) e afastado dele;
+    discos grandes são outros corpos celestes reais e não penalizam.
+
+    `disks` permite passar as deteções já calculadas pelo chamador (evita
+    voltar a correr o Hough dentro da avaliação — caro e recursivo);
+    sem ele, a deteção é feita aqui com a configuração dada.
+    """
+    if disks is None:
+        disks = find_all_disks(image, cfg)
     penalty = 0.0
     for disk in disks:
         if disk.radius < cfg.polish.reflection_min_radius:
@@ -126,6 +143,8 @@ def _reflection_penalty(image: np.ndarray, cx: int, cy: int, radius: float, cfg)
         if disk.cx == cx and disk.cy == cy:
             continue
         if abs(disk.cx - cx) < 4 and abs(disk.cy - cy) < 4:
+            continue
+        if disk.radius >= GHOST_RADIUS_RATIO * radius:
             continue
         penalty += 0.5
     return float(np.clip(1.0 - penalty, 0.0, 1.0))
@@ -135,12 +154,16 @@ def score_image(
     image: np.ndarray,
     detection: DiskDetection | None = None,
     config: AstroFrameConfig | None = None,
+    disks: list[DiskDetection] | None = None,
 ) -> StarRating:
     """Avalia uma imagem processada (0–5 estrelas) com métricas explicáveis.
 
     Sem `detection`, a avaliação usa apenas ruído/contraste globais e vale
     no máximo `score.background_weight + score.noise_weight + score.contrast_weight`
     das estrelas (as restantes pesam 0) — nunca falha.
+
+    `disks` são as deteções já calculadas pelo chamador (reutilizadas na
+    penalização por reflexos sem voltar a correr o Hough).
     """
     config = config or AstroFrameConfig()
     cfg = config.score
@@ -152,7 +175,7 @@ def score_image(
         metrics["limb"] = _limb_roundness(image, cx, cy, radius, cfg)
         metrics["noise"] = 1.0 - _noise_level(image, cx, cy, radius, config)
         metrics["contrast"] = _contrast_range(image, cx, cy, radius, config)
-        metrics["reflections"] = _reflection_penalty(image, cx, cy, radius, config)
+        metrics["reflections"] = _reflection_penalty(image, cx, cy, radius, config, disks)
         weights = {
             "background": cfg.background_weight,
             "limb": cfg.limb_weight,

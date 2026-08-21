@@ -112,9 +112,29 @@ def test_validate_item():
 def test_validate_item_sem_correspondencias():
     report = validate_item("vazia.jpg", [MANUAL], [DiskDetection(300, 300, 40)])
     assert report.n_matched == 0
-    assert report.mean_iou is None
+    # Autoavaliação: manual sem correspondência conta como IoU 0 na média.
+    assert report.mean_iou == 0.0
     assert report.mean_center_error is None
     assert report.mean_radius_error_pct is None
+
+
+def test_validate_item_iou_medio_conta_nao_correspondidos_como_zero():
+    manual = [DiskDetection(100, 100, 50), DiskDetection(300, 300, 40)]
+    detected = [DiskDetection(100, 100, 50)]
+    report = validate_item("x.jpg", manual, detected)
+    assert report.n_matched == 1
+    assert report.n_false_negatives == 1
+    perfect = report.mean_iou
+    # O par perfeito vale 1.0 e o não correspondido vale 0 → média 0.5.
+    assert perfect == 0.5
+
+
+def test_validate_item_sem_manual_mas_com_deteccoes():
+    report = validate_item("x.jpg", [], [DETECTED])
+    assert report.n_manual == 0
+    assert report.n_detected == 1
+    assert report.n_false_positives == 1
+    assert report.mean_iou is None
 
 
 def test_validate_all_agrega():

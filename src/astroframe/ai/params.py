@@ -79,24 +79,6 @@ _SPECS: list[ParamSpec] = [
         punish=0.25,
         reward=-0.0625,
     ),
-    ParamSpec(
-        "stabilizer.occluded_ratio",
-        0.5,
-        0.99,
-        0.01,
-        group="detect",
-        punish=0.01,
-        reward=-0.005,
-    ),
-    ParamSpec(
-        "stabilizer.occluded_ring",
-        1.0,
-        2.0,
-        0.05,
-        group="detect",
-        punish=-0.05,
-        reward=0.025,
-    ),
     # -- geometria: derivados da resolução/limites físicos (nunca treinados
     # por recompensa/punição; só limitados ao exportar).
     ParamSpec("stabilizer.max_radius", 50.0, 5000.0, 25.0, _INT, group="geometry"),
