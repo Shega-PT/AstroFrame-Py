@@ -219,10 +219,9 @@ def test_find_all_disks_descarta_envelope_concentrico_maior(monkeypatch):
 
 
 def test_find_all_disks_com_disk_filter_filtra(monkeypatch):
-    from astroframe.ai.cnn import DiskFilter, SmallCNN, fit_classifier
+    from astroframe.ai.cnn import DiskFilter, fit_classifier
 
     image, cx, cy = make_disk_image()
-    rng = np.random.default_rng(0)
 
     def _patches(n, kind, seed=0):
         r = np.random.default_rng(seed)

@@ -127,7 +127,14 @@ def test_save_item_circles_erros(tmp_path):
 
 def test_validate_all_report_sem_ground_truth(tmp_path, monkeypatch):
     root = _make_sample_dir(tmp_path)
-    monkeypatch.setattr("astroframe.ui.calibration_app.find_disks_for_calibration", lambda frame, config=None, expected_n=None: [])
+
+    def _no_disks(frame, config=None, expected_n=None):
+        return []
+
+    monkeypatch.setattr(
+        "astroframe.ui.calibration_app.find_disks_for_calibration",
+        _no_disks,
+    )
     rows, summary, suggestions = validate_all_report(str(root))
     assert rows[0][3] == "—"
     assert "Sem ground truth para validar" in summary

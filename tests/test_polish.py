@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import cv2
 import numpy as np
-import pytest
 
 from astroframe.config import AstroFrameConfig
 from astroframe.core.polish import _band_mask, _feather_mask, polish_image
-from astroframe.core.stabilizer import DiskDetection, find_all_disks
+from astroframe.core.stabilizer import DiskDetection
 
 
 def _disk_image(height: int = 300, width: int = 360, radius: int = 80) -> np.ndarray:

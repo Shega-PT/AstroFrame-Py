@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import threading
 import time
 
 import pytest
 
-from astroframe.ai.controller import Controller, ControllerState, FallbackNet
+from astroframe.ai.controller import Controller, FallbackNet
 from astroframe.ai.feedback import FeedbackDB, record_run
 from astroframe.ai.lstm import LSTMTuner
 from astroframe.ai.score import score_from_stars
@@ -90,7 +89,6 @@ def test_controller_apply_now_sem_runs(db):
 def test_controller_apply_now_com_runs_fallback(db):
     _populate_db(db, n=5, stars=2.0)
     cfg = AstroFrameConfig()
-    original_h = cfg.denoise.h
     ctrl = Controller(cfg, "test_profile", db=db, tuner=None)
     deltas = ctrl.apply_now()
     # FallbackNet aplica nudges → deltas não vazios
